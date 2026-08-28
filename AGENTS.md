@@ -53,7 +53,7 @@ MonARC/
 |   +-- data.md                 # Data tiers, geodata sources, licensing, Aflora pipeline
 |   +-- training.md             # 3-stage training pipeline, loss formulas, freeze schedule
 |   +-- evaluation.md           # Evaluation protocols, holdout splits, baseline standards
-|   +-- onboard.md              # Flight payload compute, latency budgets, memory limits
+|   +-- onboard.md              # Flight payload compute, execution profiling, memory models
 |   +-- literature.md           # Annotated bibliography with verified URLs
 |   +-- non-goals.md            # Out-of-scope capabilities and architectural anti-patterns
 +-- monarc/                     # Core Python library

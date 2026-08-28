@@ -228,7 +228,7 @@ Vector quantization commitment error is not a calibrated localization confidence
 \[
 c_i = \sigma\left( \frac{\mathbf{w}_c^\top \mathbf{z}_i + b_c}{T_{\mathrm{calib}}} \right)
 \]
-Correspondences with \( c_i < \tau_{\mathrm{conf}} \) (default \( \tau_{\mathrm{conf}} = 0.35 \)) are filtered prior to state estimation.
+Correspondences with \( c_i < \tau_{\mathrm{conf}} \) (a filter hyperparameter swept during development) are filtered prior to state estimation.
 
 ---
 
@@ -325,7 +325,7 @@ The Hunter policy controls the vehicle's gaze and trajectory to actively minimiz
     
                                   |
                                   v
-  [MODE-ATTENTION TRANSFORMER POLICY (120k Parameters)]
+  [MODE-ATTENTION TRANSFORMER POLICY (Compact Actor)]
     * Self-attention over mode dispersion tokens and rim-candidate tokens
     * Generates information-gradient trajectory adjustments
                                   |
@@ -339,7 +339,7 @@ The Hunter policy controls the vehicle's gaze and trajectory to actively minimiz
 ### 5.1 Training Protocol: MPPI Expert to Transformer Distillation
 The Hunter is trained entirely within an abstract 2.5D frustum gym:
 1. **Expert Generation via Model Predictive Path Integral (MPPI)**:
-   - Roll out 2,048 candidate trajectory rollouts over a horizon \( H = 12 \) steps.
+   - Roll out candidate trajectory rollouts over horizon \( H \).
    - Reward function is strictly the expected drop in pose posterior Shannon entropy:
      \[
      R(s_t, a_t) = \mathbb{E}\left[ H(p(T_t)) - H(p(T_{t+1})) \right] + \lambda_{\mathrm{smooth}} \|a_t - a_{t-1}\|_2^2
@@ -359,23 +359,23 @@ The Hunter is trained entirely within an abstract 2.5D frustum gym:
 |   1. Mass Ingestion of NAIP (RGB), 3DEP (DSM), and Overture Vector Geo rasters        |
 |   2. Precomputing Continuous Aerial Feature Field Phi_map                             |
 |   3. FSQ Discretization and Inverted Metric Index Generation (I_map)                   |
-|   4. Partitioning global index into geographic S2 Level-12 Shards (~3 km x 3 km)      |
+|   4. Partitioning global index into geographic S2 Level-12 Shards                     |
 | Compute Requirements:                                                                 |
-|   Multi-GPU clusters (NVIDIA H100 / A100), high disk I/O, GeoTIFF GDAL pipelines       |
+|   High-throughput GPU clusters, extensive storage bandwidth, GeoTIFF GDAL pipelines   |
 +---------------------------------------------------------------------------------------+
                                            |
-                    (Pre-flight USB / Ethernet Mission Upload)
+                    (Pre-flight Mission Upload of Local Shards)
                                            v
 +---------------------------------------------------------------------------------------+
 | ONBOARD UAV FLIGHT PAYLOAD                                                            |
-| Hardware: NVIDIA Jetson Orin NX (16GB, 25W) or Orin AGX (32GB, 40W)                   |
-| Real-Time Execution Loop (10-20 Hz):                                                  |
-|   1. Perspective Encoder: Frozen DINOv2-ViT-S/14 + FSQ Head (~18 ms)                   |
-|   2. S2-Sharded Inverted Index Query (~3 ms)                                          |
-|   3. Perceiver Where-Am-I Estimation Head (~8 ms)                                     |
-|   4. Hunter Transformer Policy (~2 ms)                                                |
-| Total Frame Processing Latency: ~31 ms (yielding ~30 Hz theoretical throughput)       |
-| Total Model Footprint: < 450 MB VRAM                                                  |
-| Local Map Shard Cache: 1.2 GB for 50 km x 50 km mission area                          |
+| Hardware Class: Embedded System-on-Module (e.g., Jetson-class edge accelerator)       |
+| Real-Time Execution Loop:                                                             |
+|   1. Perspective Encoder: Thin Frozen ViT-S/B Backbone + FSQ Head                     |
+|   2. S2-Sharded Inverted Index Query over Local Corridor Working Set                  |
+|   3. Perceiver Where-Am-I Estimation Head (Cross-Attention over Landmark Ties)        |
+|   4. Hunter Mode-Attention Transformer Policy (Distribution Tokens -> Action)         |
+| Architecture Property:                                                                |
+|   The giant object is the offline index; the flying payload runs a thin encoder,      |
+|   tiny Perceiver, and tiny hunter with local spatial cache working sets.               |
 +---------------------------------------------------------------------------------------+
 ```

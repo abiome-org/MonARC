@@ -70,7 +70,7 @@ Detailed specifications, mathematical derivations, operating constraints, and en
 - [`docs/data.md`](./docs/data.md): Data hierarchy (mass geodata vs. thin perspective pairs vs. abstract gym), dataset sources, licensing, and Aflora data factory ingestion pipelines.
 - [`docs/training.md`](./docs/training.md): Three-stage sequential training schedule, loss functions, confidence calibration formulations, and freeze requirements.
 - [`docs/evaluation.md`](./docs/evaluation.md): Protocol specifications, spatial/seasonal holdouts, metric reporting standards, and rejection of fabricated performance gates.
-- [`docs/onboard.md`](./docs/onboard.md): Embedded edge compute specifications, SWaP-C budgets, execution timing constraints, and memory models.
+- [`docs/onboard.md`](./docs/onboard.md): Embedded edge compute specifications, qualitative onboard vs. offline split, execution profiling protocols, and working set models.
 - [`docs/literature.md`](./docs/literature.md): Annotated bibliography of foundational visual localization, coordinate regression, and active vision literature with verified links.
 - [`docs/non-goals.md`](./docs/non-goals.md): Explicit architectural exclusions, anti-patterns, and out-of-scope capabilities.
 

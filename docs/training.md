@@ -58,7 +58,7 @@ Let \( \mathbf{I}_{\mathrm{rgb}} \in \mathbb{R}^{B \times 3 \times H \times W} \
    \mathbf{z}_{\mathrm{fused}} = \mathrm{MLP}_{\theta_{\mathrm{fuse}}}([\mathbf{f}_{\mathrm{rgb}}, \mathbf{f}_{\mathrm{geo}}]) \in \mathbb{R}^{B \times D_f \times H' \times W'}
    \]
 4. **Finite Scalar Quantization (Deterministic)**:
-   Given quantization level tuple \( L = (8, 8, 8, 5, 5) \) yielding \( K = 12,800 \) discrete codes, the continuous representation \( \mathbf{z}_{\mathrm{fused}} \) is projected to \( \mathbb{R}^5 \) and quantized via FSQ:
+   Given quantization level tuple \( L = (l_1, l_2, \dots, l_d) \) yielding \( K = \prod_{i=1}^d l_i \) discrete codes, the continuous representation \( \mathbf{z}_{\mathrm{fused}} \) is projected to \( \mathbb{R}^d \) and quantized via FSQ:
    \[
    \hat{\mathbf{z}} = \mathrm{FSQ}(\mathbf{z}_{\mathrm{fused}})
    \]
@@ -90,10 +90,10 @@ Given an oblique drone camera frame \( \mathbf{I}_{\mathrm{persp}} \) with calib
    \[
    \mathcal{L}_{\mathrm{align}} = -\frac{1}{N_p} \sum_{p=1}^{N_p} \log \frac{\exp\left( \langle \mathbf{z}_p, \Phi_{\mathrm{map}}(\mathbf{x}_p^*) \rangle / \tau \right)}{\exp\left( \langle \mathbf{z}_p, \Phi_{\mathrm{map}}(\mathbf{x}_p^*) \rangle / \tau \right) + \sum_{k=1}^{N_{\mathrm{neg}}} \exp\left( \langle \mathbf{z}_p, \Phi_{\mathrm{map}}(\mathbf{x}_{p,k}^{\mathrm{neg}}) \rangle / \tau \right)}
    \]
-   where negative spatial locations \( \mathbf{x}_{p,k}^{\mathrm{neg}} \) are sampled using a hard-negative mining strategy within a 5 km radius.
+   where negative spatial locations \( \mathbf{x}_{p,k}^{\mathrm{neg}} \) are sampled using a hard-negative mining strategy within local spatial neighborhoods.
 
 ### 3.2 Confidence Calibration Loss
-The confidence head \( c_{\psi_{\mathrm{conf}}}(\mathbf{z}_p) \) predicts whether the correspondence \( (c_p, \mathbf{u}_p) \) will yield a reprojection error below a geometric inlier threshold \( \epsilon_{\mathrm{reproj}} = 5.0 \text{ px} \) under the ground-truth pose:
+The confidence head \( c_{\psi_{\mathrm{conf}}}(\mathbf{z}_p) \) predicts whether the correspondence \( (c_p, \mathbf{u}_p) \) will yield a reprojection error below a geometric inlier threshold hyperparameter \( \epsilon_{\mathrm{reproj}} \) (a training target definition swept during development, e.g., \( \epsilon_{\mathrm{reproj}} \approx 5.0 \text{ px} \)) under the ground-truth pose:
 \[
 y_p = \mathbb{I}\left( \|\mathbf{u}_p - \pi(T^*, \mathbf{x}_p^*)\|_2 \le \epsilon_{\mathrm{reproj}} \right)
 \]
@@ -112,8 +112,8 @@ Total Stage 2 Loss:
 ## 4. Stage 3: Hunter Policy Optimization in Frustum Gym
 
 ### 4.1 Information-Gain MPPI Trajectory Optimizer
-In the abstract 2.5D frustum gym, the expert policy generates control sequences \( \mathbf{U} = (a_0, a_1, \dots, a_{H-1}) \) across horizon \( H = 12 \) using Model Predictive Path Integral (MPPI) control:
-1. Sample \( M = 2048 \) candidate control trajectories:
+In the abstract 2.5D frustum gym, the expert policy generates control sequences \( \mathbf{U} = (a_0, a_1, \dots, a_{H-1}) \) across horizon \( H \) using Model Predictive Path Integral (MPPI) control:
+1. Sample candidate control trajectories:
    \[
    a_t^{(m)} \sim \mathcal{N}(\mu_t^{(k)}, \Sigma_t)
    \]
@@ -121,14 +121,14 @@ In the abstract 2.5D frustum gym, the expert policy generates control sequences 
    \[
    R(\tau^{(m)}) = \sum_{t=0}^{H-1} \left( H(p(T_t^{(m)})) - H(p(T_{t+1}^{(m)})) \right) - \lambda_{\mathrm{act}} \|a_t^{(m)}\|_2^2 + \mathbb{I}(\mathrm{Converged}) \cdot R_{\mathrm{term}}
    \]
-   where \( R_{\mathrm{term}} \) is a bounded constant reward (\( \le 2.0 \)) for achieving unimodal posterior concentration (\( H(p(T)) < H_{\mathrm{threshold}} \)).
+   where \( R_{\mathrm{term}} \) is a bounded constant reward for achieving unimodal posterior concentration (\( H(p(T)) < H_{\mathrm{threshold}} \)).
 3. Update distribution mean:
    \[
    \mu_t^{(k+1)} = \frac{\sum_{m=1}^M \exp\left( \frac{1}{\lambda} R(\tau^{(m)}) \right) a_t^{(m)}}{\sum_{m=1}^M \exp\left( \frac{1}{\lambda} R(\tau^{(m)}) \right)}
    \]
 
 ### 4.2 Supervised Behavioral Cloning into Tiny Transformer
-The converged MPPI control actions \( a_0^* \) are recorded across 1,000,000 randomized gym episodes. The Hunter transformer policy \( \pi_\phi(a \mid s) \) is trained via supervised regression:
+The converged MPPI control actions \( a_0^* \) are recorded across randomized gym episodes. The Hunter transformer policy \( \pi_\phi(a \mid s) \) is trained via supervised regression:
 \[
 \mathcal{L}_{\mathrm{Hunter}} = \mathbb{E}_{(s, a^*)}\left[ \| \pi_\phi(s) - a^* \|_2^2 \right]
 \]
@@ -139,7 +139,7 @@ where input state \( s = [ H(p(T_t)), \Delta \boldsymbol{\mu}_{\mathrm{modes}}, 
 ## 5. Parameter Freeze Schedule
 
 | Training Stage | DINOv2 RGB Backbone | Fusion Stem | FSQ Quantizer | Perspective Adapter | Where-Am-I Perceiver | Hunter Policy |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Stage 1: 2D Mass Field** | **FROZEN** | TRAINABLE | TRAINABLE | N/A | N/A | N/A |
 | **Stage 2: Cross-View Align** | **FROZEN** | **FROZEN** | **FROZEN** | TRAINABLE | TRAINABLE | N/A |
 | **Stage 3: Frustum Gym Hunter**| **FROZEN** | **FROZEN** | **FROZEN** | **FROZEN** | **FROZEN** | TRAINABLE |

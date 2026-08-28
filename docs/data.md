@@ -111,10 +111,10 @@ MonARC trains the Hunter policy in a lightweight mathematical **Frustum Gym**:
   \mathrm{Visible}(m, T_t) = \mathbb{I}\left( \mathbf{x}_m \in \mathrm{Frustum}(T_t, \mathbf{K}) \land \neg \mathrm{Occluded}(\mathbf{x}_m, \mathrm{DSM}) \right)
   \]
 - **Noise Model**:
-  - Code corruption: With probability \( p_{\mathrm{noise}} = 0.15 \), observed code is replaced with a random code from the global codebook distribution.
-  - Dropout: With probability \( p_{\mathrm{drop}} = 0.10 \), visible landmark is omitted.
-  - Geometric perturbation: 2D pixel coordinates perturbed by Gaussian noise \( \epsilon_{uv} \sim \mathcal{N}(0, \sigma_{\mathrm{pixel}}^2) \).
-- **Throughput**: Runs at > 100,000 steps per second on a single CPU core, enabling rapid MPPI trajectory rollouts.
+  - Code corruption: Observed codes subjected to random codebook distribution noise.
+  - Dropout: Random landmark omission simulating temporary line-of-sight occlusion.
+  - Geometric perturbation: 2D pixel coordinates perturbed by Gaussian noise.
+- **Throughput**: High-frequency step execution on CPU, enabling rapid MPPI trajectory rollouts.
 
 ---
 
@@ -153,4 +153,4 @@ Ingestion of continental-scale geodata is managed by the Aflora automated pipeli
                                                  * Inverted Metric Index (LMDB/S2)
 ```
 
-Ingestion scripts require no manual human tagging. Processing a standard 50 km \( \times \) 50 km mission corridor requires approximately 45 minutes on a workstation with 4 \( \times \) NVIDIA RTX 4090 GPUs.
+Ingestion scripts require no manual human tagging, outputting continuous feature fields and spatial inverted indexes for arbitrary geographic corridors.

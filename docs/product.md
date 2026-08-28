@@ -86,14 +86,16 @@ Once the pose posterior mass concentrates around a unimodal cluster:
 
 ## 3. Product Success Criteria and Turing-Test Analog
 
-In GPS-denied autonomous aviation, subjective perceptual quality and LLM-as-judge heuristics are invalid metrics. The product criteria are strictly physical and geometric:
+In GPS-denied autonomous aviation, subjective perceptual quality and LLM-as-judge heuristics are invalid metrics. Success is defined strictly by physical and geometric performance against verified RTK-GPS ground truth across spatially held-out flight trajectories:
 
-1. **Horizontal Position Accuracy**: Median horizontal Euclidean error \( \le 3.0 \text{ m} \) in structured terrain; \( \le 8.0 \text{ m} \) in rural/monoculture terrain at 100 m AGL.
-2. **Altitude (Z) Accuracy**: Vertical error \( \le 1.5 \text{ m} \) against ground-truth LIDAR surface elevation.
-3. **Heading / Attitude Accuracy**: Yaw error \( \le 1.0^\circ \); pitch/roll error \( \le 0.5^\circ \).
-4. **Cold-Start Relocalization Latency**: Time-to-first-fix (TTFF) \( \le 1.5 \text{ s} \) from cold boot on an embedded accelerator (e.g., NVIDIA Jetson Orin).
-5. **Zero-Drift Endurance**: Bounded localization error over arbitrary flight distances without secular drift accumulation.
-6. **Zero Map Retraining on New Flight Paths**: The system must localize over zero-shot flight trajectories that were never previously flown, relying exclusively on pre-ingested public geodata.
+1. **GPS-Denied Metric Position Estimation**: Accurate horizontal Euclidean position recovery evaluated against dual-frequency RTK-GPS across varied terrain topologies (urban, suburban, rural, agrarian).
+2. **True Geometric Altitude Recovery**: Accurate vertical elevation recovery evaluated against LiDAR Digital Surface Models.
+3. **Attitude and Heading Alignment**: Metric heading (yaw) and orientation estimation aligned to true geodetic North.
+4. **Cold-Start Convergence**: Rapid reduction of pose posterior entropy from an uninformative uniform prior to a concentrated unimodal state.
+5. **Zero-Drift Long-Distance Endurance**: Bounded localization error maintained across long flight paths through periodic map-conditioned landmark resets, preventing open-loop dead-reckoning divergence.
+6. **Zero-Shot Generalization on New Flight Paths**: The system must localize over flight paths that were never previously flown, relying strictly on pre-ingested public geodata without requiring prior aerial reconnaissance or map retraining.
+
+All quantitative evaluation protocols, reporting bins, and diagnostic benchmarks are defined in [`docs/evaluation.md`](./evaluation.md).
 
 ---
 

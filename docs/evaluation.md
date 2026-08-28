@@ -8,7 +8,7 @@ Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)
 
 ## 1. Empirical Discipline and Anti-Fabrication Invariants
 
-MonARC enforces rigorous evaluation standards. Fabricating synthetic metric thresholds (e.g., claiming "achieves 99.4% accuracy across North America") or presenting limited academic benchmark numbers as global flight performance is strictly prohibited.
+MonARC enforces rigorous evaluation standards. Fabricating synthetic metric thresholds or presenting limited academic benchmark numbers as global flight performance is strictly prohibited.
 
 1. **No Random Frame Splitting**: Never split train and test sets by randomly sampling video frames from the same flight path. Contiguous temporal frames share high spatial correlation, artificially inflating validation accuracy.
 2. **Spatial Holdouts**: Evaluation must occur on geographically disjoint spatial bounding boxes separated by at least 25 km from any training tile.
@@ -22,13 +22,13 @@ MonARC enforces rigorous evaluation standards. Fabricating synthetic metric thre
 ```
 +===================================================================================================+
 |                                PROTOCOL 1: COLD-START RELOCALIZATION                              |
-| Prior: None (Uniform over 100 km x 100 km region)                                                 |
-| Metric Suite:                                                                                     |
+| Prior: None (Uniform over spatial mission bounding box)                                           |
+| Pre-declared Metric Suite:                                                                        |
 |   - Horizontal Translation Error: Median, 75th percentile, 95th percentile (meters)               |
 |   - Vertical Translation Error: Median, 95th percentile (meters)                                  |
 |   - Heading / Yaw Error: Median, 95th percentile (degrees)                                        |
 |   - Time-to-First-Fix (TTFF): Wall-clock time to unimodal posterior convergence (seconds)         |
-|   - Global Failure Rate: Percentage of trials with horizontal error > 25.0 meters                 |
+|   - Pre-declared Reporting Bin: Percentage of trials exceeding 25.0 meters horizontal error       |
 +===================================================================================================+
                                                   |
                                                   v
@@ -36,9 +36,9 @@ MonARC enforces rigorous evaluation standards. Fabricating synthetic metric thre
 |                                PROTOCOL 2: CONTINUOUS 6-DoF TRACKING                              |
 | Prior: Previous Posterior + IMU Dead-Reckoning Propagation                                        |
 | Constraints: Query restricted to local S2 Level-12 Map Shard                                      |
-| Metric Suite:                                                                                     |
+| Pre-declared Metric Suite:                                                                        |
 |   - Trajectory Drift Rate: Drift percentage (% of total distance traveled)                       |
-|   - Absolute Trajectory Error (ATE): Root-mean-square error over 10 km flight paths (meters)      |
+|   - Absolute Trajectory Error (ATE): Root-mean-square error over flight path (meters)             |
 |   - Relative Pose Error (RPE): Drift per 100 meters traveled                                      |
 |   - Filter Consistency (NEES): Normalized Estimation Error Squared against ground truth RTK-GPS   |
 +===================================================================================================+
@@ -48,7 +48,7 @@ MonARC enforces rigorous evaluation standards. Fabricating synthetic metric thre
 |                                PROTOCOL 3: ACTIVE HUNTER EFFICIENCY                               |
 | Task: Reduce pose uncertainty under high-entropy ambiguous initial conditions                     |
 | Baseline: Random exploration yaw / fixed straight-line flight                                     |
-| Metric Suite:                                                                                     |
+| Pre-declared Metric Suite:                                                                        |
 |   - Mean Entropy Drop Rate: Delta H per gaze/flight step                                          |
 |   - Steps-to-Convergence: Number of active observations required to reach H < H_target           |
 |   - Path Overhead Ratio: (Actual Flight Distance) / (Straight-Line Goal Distance)                 |
@@ -63,32 +63,32 @@ MonARC enforces rigorous evaluation standards. Fabricating synthetic metric thre
 MonARC requires reporting internal diagnostic correlations to assess system calibration and failure risk:
 
 ```
-                      DIAGNOSTIC CORRELATION CURVES
+                      DIAGNOSTIC CORRELATION PROTOCOLS
                       
   (a) Inlier Count vs. Pose Error         (b) Constellation Uniqueness vs. Entropy
   
   Pose Error (m)                          Entropy H(p(T))
        ^                                       ^
-  50m  | *                                8.0  | *
+       | *                                     | *
        |  *                                    |  *
-  20m  |   *                              4.0  |   *
+       |   *                                   |   *
        |     *                                 |     *
-   5m  |       * * * * *                  1.0  |       * * * * *
+       |       * * * * *                       |       * * * * *
    0m  +----------------------->               +----------------------->
-       0   10   20   40   80                   0.0  0.2  0.5  0.8  1.0
+       0           [Observed]                  0.0                  1.0
           Verified Inlier Count                     Uniqueness Ratio (lambda_c)
 ```
 
 ### 3.1 Verified Inlier Count vs. Pose Error
 - **Metric**: Number of 2D-3D correspondence ties surviving metric constellation verification.
-- **Invariant**: Localization error must exhibit monotonic decrease as inlier count increases. If high inlier counts (\( > 30 \)) produce high pose errors (\( > 10 \text{ m} \)), it indicates geometric aliasing in the inverted index.
+- **Invariant**: Localization error must exhibit monotonic decrease as inlier count increases. If high inlier counts produce high pose errors, it indicates geometric aliasing in the inverted index.
 
 ### 3.2 Constellation Uniqueness Ratio (\( \lambda_c \))
 - **Definition**: The ratio of candidate spatial locations matching the observed metric constellation relative to the global code occurrence frequency:
   \[
   \lambda_c = \frac{1}{|\{ \mathbf{x} \in \mathcal{M} \mid \mathrm{ConstellationMatch}(\mathbf{x}, \mathcal{C}_{\mathrm{obs}}) \}|}
   \]
-- **Invariant**: High uniqueness (\( \lambda_c \approx 1.0 \)) must strictly correlate with rapid Shannon entropy reduction in the Where-Am-I head.
+- **Invariant**: High uniqueness (\( \lambda_c \to 1.0 \)) must correlate with rapid Shannon entropy reduction in the Where-Am-I head.
 
 ---
 
@@ -108,25 +108,25 @@ To ensure reproducibility, MonARC evaluates against four standardized public dat
 
 ## 5. Failure Analysis Reporting Standard
 
-Every evaluation report generated in this repository must include the following breakdown:
+Every evaluation report generated in this repository must record empirical findings against pre-declared metrics and reporting bins:
 
 ```
 ================================================================================
 MONARC EVALUATION RUN REPORT
-Benchmark ID: EVAL-2026-08-28-REGION-OHIO-EAST
-Test Extent: 100 km x 100 km bounding box (Spatial Holdout; 0% train overlap)
-Reference Geodata: NAIP 2020 (Leaf-On) vs. Flight Test 2024 (Leaf-Off / Autumn)
-Operating Altitude: 80m - 120m AGL
+Benchmark ID:      [Observed Benchmark Identifier]
+Test Extent:       [Observed Bounding Box / Spatial Holdout Region]
+Reference Geodata: [Observed Reference Source & Vintage] vs. [Test Imagery Vintage]
+Operating Altitude:[Observed Altitude Range] AGL
 ================================================================================
-1. COLD-START RELOCALIZATION (Lost-in-Space, N = 1,000 trials)
+1. COLD-START RELOCALIZATION (Lost-in-Space, N = [Observed Trial Count])
    - Median Horizontal Error:       [Observed Value] m
    - 95th Percentile Error:         [Observed Value] m
    - Median Altitude (Z) Error:     [Observed Value] m
    - Median Yaw / Heading Error:    [Observed Value] deg
    - Time-to-First-Fix (TTFF):      [Observed Value] s
-   - Gross Failure Rate (> 25m):    [Observed Value] %
+   - Gross Error Bin (> 25m):       [Observed Value] %
 
-2. CONTINUOUS 6-DoF TRACKING (Flight Length = 25.0 km)
+2. CONTINUOUS 6-DoF TRACKING (Flight Length = [Observed Distance] km)
    - Absolute Trajectory Error:     [Observed Value] m
    - Total Trajectory Drift:        [Observed Value] % of distance traveled
    - S2 Shard Query Latency:        [Observed Value] ms
