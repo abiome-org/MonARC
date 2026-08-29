@@ -1,6 +1,6 @@
 # Training Pipeline and Loss Formulations
 
-Date: 2026-08-28  
+Date: 2026-08-29  
 Status: Training Protocol Specification  
 Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)  
 
@@ -10,22 +10,27 @@ Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)
 
 MonARC enforces a strictly staged, decoupled training pipeline. End-to-end backpropagation across the entire system is architecturally prohibited.
 
+**v1 does not walk the country, does not pretrain a foundation model, and does not require a custom flight campaign.** Cost law: [`docs/cost.md`](./cost.md).
+
 ```
 +===================================================================================================+
-| STAGE 1: 2D MASS CODEBOOK & CONTINUOUS FEATURE FIELD PRETRAINING                                  |
-| Data: Continental 2D/2.5D Mass Geodata (NAIP + 3DEP DSM + Overture/OSM Rasters)                  |
-| Active Parameters: Fusion Stem theta_geo + Fusion MLP theta_fuse + FSQ Projection theta_fsq       |
-| Frozen: Pretrained DINOv2 Foundation Backbone (RGB)                                               |
-| Objective: Multi-scale spatial feature consistency + deterministic FSQ codebook quantization     |
+| STAGE 1: SAMPLED CODEBOOK + CORRIDOR INFERENCE                                                     |
+| Train: Fusion Stem theta_geo + Fusion MLP theta_fuse + FSQ Projection theta_fsq                     |
+|        on a *sampled* diverse tile set (multiple biomes; tiny versus CONUS)                        |
+| Infer: Frozen stack on the v1 corridor only (Jefferson County / Front Range default)              |
+| Frozen: Pretrained DINOv2 RGB backbone. No foundation-model pretrain.                               |
+| Export: FSQ codes + inverted metric index (optional small corridor field). Not a CONUS fp16 grid. |
 +===================================================================================================+
                                                   |
                                                   v  (Freeze Stage 1 Weights & Codebook)
 +===================================================================================================+
 | STAGE 2: PERSPECTIVE ENCODER CROSS-VIEW ALIGNMENT & CONFIDENCE CALIBRATION                         |
-| Data: Thin Perspective Pairs (University-1652, DenseUAV, SUES-200, OrthoLoC, Real Flight Logs)    |
+| Data: Public thin pairs only — University-1652, DenseUAV, SUES-200, OrthoLoC                     |
 | Active Parameters: Perspective Cross-View Adapter psi_persp + Confidence Head psi_conf           |
 | Frozen: Stage 1 Ingestion Network, DINOv2 Backbone, FSQ Codebook Quantizer                        |
-| Objective: InfoNCE cross-view feature alignment to continuous field Phi_map + calibrated conf     |
+| Objective: InfoNCE cross-view alignment to Phi_map + calibrated confidence                        |
+| Out of v1: Custom flight-log campaigns. Photorealistic renderer / 3DGS / GISNav / Unreal         |
+|            unless alignment on those four public sets actually fails.                             |
 +===================================================================================================+
                                                   |
                                                   v  (Freeze Stage 2 Perception Weights)
@@ -34,13 +39,21 @@ MonARC enforces a strictly staged, decoupled training pipeline. End-to-end backp
 | Data: Abstract 2.5D Frustum Gym with Randomized Landmark Fields & Code Collisions                |
 | Active Parameters: Hunter Mode-Attention Transformer Policy phi_hunter                            |
 | Frozen: Entire Perception & State Estimation Stack (Stages 1 & 2)                                 |
+| Compute: CPU; millions of episodes on a laptop or workstation. No MSFS / Unreal / Unity.        |
 | Optimization: Trajectory rollouts via MPPI/CEM on expected entropy drop -> Supervised Distillation|
 +===================================================================================================+
 ```
 
 ---
 
-## 2. Stage 1: Continuous Field and FSQ Codebook Training
+## 2. Stage 1: Sampled Codebook Training and Corridor Inference
+
+Stage 1 is **not** a continental feature-field pretrain. It has two sequential jobs:
+
+1. **Train** the fusion stem and FSQ on a sampled diverse tile set (multiple biomes). The sample is small relative to CONUS. Do not iterate every NAIP tile in the United States.
+2. **Infer** the frozen encoder + FSQ on the **v1 corridor only**. Persist FSQ codes and the inverted metric index. Landmarks are emergent extrema, not every DINOv2 token. Do not write a dense continental fp16 / Zarr field.
+
+DINOv2 remains frozen. Do not train a new foundation visual backbone.
 
 ### 2.1 Forward Formulation
 Let \( \mathbf{I}_{\mathrm{rgb}} \in \mathbb{R}^{B \times 3 \times H \times W} \) be the orthophoto patch, \( \mathbf{D} \in \mathbb{R}^{B \times 1 \times H \times W} \) be the aligned 3DEP elevation raster, and \( \mathbf{V} \in \mathbb{R}^{B \times C_g \times H \times W} \) be the rasterized vector geometry.
@@ -77,15 +90,19 @@ Stage 1 is optimized using a dual-objective loss:
   \mathcal{L}_{\mathrm{spatial}} = \sum_{i,j} \|\hat{\mathbf{z}}_{i+1,j} - \hat{\mathbf{z}}_{i,j}\|_2^2 + \|\hat{\mathbf{z}}_{i,j+1} - \hat{\mathbf{z}}_{i,j}\|_2^2
   \]
 
+Query field \( \Phi_{\mathrm{map}} \) used in Stage 2 is the **corridor** representation: interpolated from FSQ codes / a small corridor grid, not a continental dense store.
+
 ---
 
 ## 3. Stage 2: Perspective Encoder Alignment & Confidence Calibration
 
+v1 Stage 2 trains **only** on University-1652, DenseUAV, SUES-200, and OrthoLoC. Do not require proprietary flight logs. Do not stand up GISNav, 3DGS, Unreal, or a photorealistic renderer unless those four sets actually fail to support alignment.
+
 ### 3.1 Cross-View Contrastive Alignment (InfoNCE)
-Given an oblique drone camera frame \( \mathbf{I}_{\mathrm{persp}} \) with calibrated camera intrinsics \( \mathbf{K} \) and true 6-DoF pose \( T^* \), each perspective patch \( p \) has a ray intersection \( \mathbf{x}_p^* = (x, y, z)_p^* \) on the 3DEP ground surface.
+Given an oblique drone camera frame \( \mathbf{I}_{\mathrm{persp}} \) with calibrated camera intrinsics \( \mathbf{K} \) and true 6-DoF pose \( T^* \), each perspective patch \( p \) has a ray intersection \( \mathbf{x}_p^* = (x, y, z)_p^* \) on the 3DEP ground surface (or the bench's supplied DSM).
 
 1. Compute perspective token \( \mathbf{z}_p = g_{\psi_{\mathrm{persp}}}(\mathrm{DINOv2}(\mathbf{I}_{\mathrm{persp}})_p) \).
-2. Query the continuous aerial field \( \Phi_{\mathrm{map}}(\mathbf{x}_p^*) \).
+2. Query the aerial field \( \Phi_{\mathrm{map}}(\mathbf{x}_p^*) \) (corridor interpolated field or the bench's paired geodata field).
 3. Compute the multi-negative InfoNCE contrastive loss:
    \[
    \mathcal{L}_{\mathrm{align}} = -\frac{1}{N_p} \sum_{p=1}^{N_p} \log \frac{\exp\left( \langle \mathbf{z}_p, \Phi_{\mathrm{map}}(\mathbf{x}_p^*) \rangle / \tau \right)}{\exp\left( \langle \mathbf{z}_p, \Phi_{\mathrm{map}}(\mathbf{x}_p^*) \rangle / \tau \right) + \sum_{k=1}^{N_{\mathrm{neg}}} \exp\left( \langle \mathbf{z}_p, \Phi_{\mathrm{map}}(\mathbf{x}_{p,k}^{\mathrm{neg}}) \rangle / \tau \right)}
@@ -110,6 +127,8 @@ Total Stage 2 Loss:
 ---
 
 ## 4. Stage 3: Hunter Policy Optimization in Frustum Gym
+
+Stage 3 stays a **CPU** frustum gym. Millions of episodes on a laptop or workstation. Microsoft Flight Simulator, Unreal Engine, Unity, and other game-engine visual gyms remain forbidden.
 
 ### 4.1 Information-Gain MPPI Trajectory Optimizer
 In the abstract 2.5D frustum gym, the expert policy generates control sequences \( \mathbf{U} = (a_0, a_1, \dots, a_{H-1}) \) across horizon \( H \) using Model Predictive Path Integral (MPPI) control:
@@ -140,8 +159,8 @@ where input state \( s = [ H(p(T_t)), \Delta \boldsymbol{\mu}_{\mathrm{modes}}, 
 
 | Training Stage | DINOv2 RGB Backbone | Fusion Stem | FSQ Quantizer | Perspective Adapter | Where-Am-I Perceiver | Hunter Policy |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Stage 1: 2D Mass Field** | **FROZEN** | TRAINABLE | TRAINABLE | N/A | N/A | N/A |
-| **Stage 2: Cross-View Align** | **FROZEN** | **FROZEN** | **FROZEN** | TRAINABLE | TRAINABLE | N/A |
-| **Stage 3: Frustum Gym Hunter**| **FROZEN** | **FROZEN** | **FROZEN** | **FROZEN** | **FROZEN** | TRAINABLE |
+| **Stage 1: Sampled codebook + corridor infer** | **FROZEN** | TRAINABLE | TRAINABLE | N/A | N/A | N/A |
+| **Stage 2: Public-bench cross-view** | **FROZEN** | **FROZEN** | **FROZEN** | TRAINABLE | TRAINABLE | N/A |
+| **Stage 3: CPU frustum gym Hunter**| **FROZEN** | **FROZEN** | **FROZEN** | **FROZEN** | **FROZEN** | TRAINABLE |
 
-This freeze schedule prevents catastrophic forgetting of the foundational visual codebook and guarantees that the offline geodata index remains completely stationary.
+This freeze schedule prevents catastrophic forgetting of the visual codebook and guarantees that the corridor geodata index remains stationary after Stage 1 inference.

@@ -1,6 +1,6 @@
 # Evaluation Protocols and Validation Benchmarks
 
-Date: 2026-08-28  
+Date: 2026-08-29  
 Status: Evaluation Protocol Specification  
 Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)  
 
@@ -11,9 +11,9 @@ Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)
 MonARC enforces rigorous evaluation standards. Fabricating synthetic metric thresholds or presenting limited academic benchmark numbers as global flight performance is strictly prohibited.
 
 1. **No Random Frame Splitting**: Never split train and test sets by randomly sampling video frames from the same flight path. Contiguous temporal frames share high spatial correlation, artificially inflating validation accuracy.
-2. **Spatial Holdouts**: Evaluation must occur on geographically disjoint spatial bounding boxes separated by at least 25 km from any training tile.
+2. **Spatial Holdouts**: Evaluation must occur on geographically disjoint spatial bounding boxes. For v1 public benches, use the dataset's published splits. For any later corridor flight trial, hold out a box inside or adjacent to the corridor (at least 25 km from Stage 1 training tiles when the corridor allows). Do not require a CONUS-wide holdout grid.
 3. **Temporal & Vintage Shift**: Evaluation imagery must be tested against reference geodata from a different survey vintage (e.g., test 2024 UAV imagery against 2020 NAIP orthophotos) and across seasonal shifts (e.g., leaf-on training vs. leaf-off or snow-covered testing).
-4. **Campus Retrieval vs. Continental Flight**: Metrics on small academic datasets (e.g., University-1652 Recall@1) measure closed-world campus building retrieval, not continental visual localization. High academic retrieval numbers must never be conflated with the GPS-denied flight mission envelope.
+4. **Campus Retrieval vs. Flight in the Designated Corridor**: Metrics on small academic datasets (e.g., University-1652 Recall@1) measure closed-world campus building retrieval, not GPS-denied flight. High academic retrieval numbers must never be conflated with the flight mission envelope. v1 flight claims, if any, are restricted to the designated corridor (Jefferson County / Front Range) plus public benches — not CONUS.
 
 ---
 
@@ -94,15 +94,15 @@ MonARC requires reporting internal diagnostic correlations to assess system cali
 
 ## 4. Public Benchmark Evaluation & Ground-Truth Flight Validation
 
-To ensure reproducibility, MonARC evaluates against four standardized public datasets alongside dedicated flight trials:
+**v1 evaluation is the four public datasets.** University-1652, DenseUAV, SUES-200, and OrthoLoC are the training and reporting loop. Dedicated RTK flight trials are expansion / operational validation, not a v1 ingest or training requirement, and are never a CONUS campaign.
 
-| Evaluation Suite | Domain / Ground Truth | Protocol Focus | Primary Metric |
-| :--- | :--- | :--- | :--- |
-| **OrthoLoC Benchmark** | 16,425 UAV images across 47 regions with DOPs/DSMs | 6-DoF pose estimation vs. orthographic geodata | Median Translation (m), Rotation (deg) |
-| **University-1652** | 72 University campuses, paired drone-satellite | Cross-view retrieval baseline | Recall@1, AP (Retrieval baseline only) |
-| **DenseUAV Benchmark** | Multi-altitude UAV-satellite imagery (80-100m AGL) | Cross-altitude scale robustness | Recall@1, Meter Error vs. GSD |
-| **SUES-200 Benchmark** | Multi-altitude drone imagery (150-300m AGL) | High-altitude cross-view matching | Recall@1, Recall@5 |
-| **Real-World Flight Trials** | Fixed-wing & multirotor with dual-frequency RTK-GPS | End-to-end 6-DoF GPS-denied trajectory | ATE (m), Drift (% distance), TTFF (s) |
+| Evaluation Suite | Domain / Ground Truth | Protocol Focus | Primary Metric | v1 |
+| :--- | :--- | :--- | :--- | :--- |
+| **OrthoLoC Benchmark** | 16,425 UAV images across 47 regions with DOPs/DSMs | 6-DoF pose estimation vs. orthographic geodata | Median Translation (m), Rotation (deg) | Required |
+| **University-1652** | 72 University campuses, paired drone-satellite | Cross-view retrieval baseline | Recall@1, AP (Retrieval baseline only) | Required |
+| **DenseUAV Benchmark** | Multi-altitude UAV-satellite imagery (80-100m AGL) | Cross-altitude scale robustness | Recall@1, Meter Error vs. GSD | Required |
+| **SUES-200 Benchmark** | Multi-altitude drone imagery (150-300m AGL) | High-altitude cross-view matching | Recall@1, Recall@5 | Required |
+| **Real-World Flight Trials** | Fixed-wing & multirotor with dual-frequency RTK-GPS | End-to-end 6-DoF GPS-denied trajectory in a declared corridor | ATE (m), Drift (% distance), TTFF (s) | Expansion / validation; not a v1 training gate |
 
 ---
 
@@ -114,7 +114,7 @@ Every evaluation report generated in this repository must record empirical findi
 ================================================================================
 MONARC EVALUATION RUN REPORT
 Benchmark ID:      [Observed Benchmark Identifier]
-Test Extent:       [Observed Bounding Box / Spatial Holdout Region]
+Test Extent:       [Observed Bounding Box / Corridor or Public-Bench Split]
 Reference Geodata: [Observed Reference Source & Vintage] vs. [Test Imagery Vintage]
 Operating Altitude:[Observed Altitude Range] AGL
 ================================================================================

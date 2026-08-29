@@ -1,6 +1,6 @@
 # Annotated Bibliography and Foundational Literature
 
-Date: 2026-08-28  
+Date: 2026-08-29  
 Status: Reference Literature Index  
 Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)  
 
@@ -116,12 +116,12 @@ Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)
     - *Summary*: Cross-view UAV visual localization dataset covering 200 distinct geographic scenes captured at altitudes of 150m, 200m, 250m, and 300m AGL.
 
 20. **USGS National Agriculture Imagery Program (NAIP)**
-    - *Access*: [USGS EROS NAIP Portal](https://www.usgs.gov/centers/eros/science/usgs-eros-archive-aerial-photography-national-agriculture-imagery-program-naip)
-    - *Summary*: Authoritative 4-band high-resolution orthophotography across CONUS.
+    - *Access*: [USGS EROS NAIP Portal](https://www.usgs.gov/centers/eros/science/usgs-eros-archive-aerial-photography-national-agriculture-imagery-program-naip) / AWS `s3://naip-visualization/`
+    - *Summary*: Authoritative orthophotography across CONUS. CONUS coverage is **data availability**. v1 ingest is one corridor from visualization JPEG COGs (one vintage, ~0.6 m); not `naip-source`, not all years.
 
 21. **USGS 3D Elevation Program (3DEP)**
     - *Access*: [USGS 3DEP Program](https://www.usgs.gov/3d-elevation-program)
-    - *Summary*: Authoritative high-density LiDAR-derived Digital Surface Models (DSM) and bare-earth DEMs across the United States.
+    - *Summary*: Authoritative LiDAR-derived DSM/DEM products. v1 uses the cheapest already-COG product that supplies metric \( z \) in the corridor bbox (prefer 1/9 arc-second ~3 m). CONUS 1 m point clouds are not a v1 source.
 
 22. **Overture Maps Foundation**
     - *Access*: [Overture Maps](https://overturemaps.org/)

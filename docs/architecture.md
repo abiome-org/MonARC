@@ -1,6 +1,6 @@
 # System Architecture: The Four Decoupled Subsystems
 
-Date: 2026-08-28  
+Date: 2026-08-29  
 Status: Architectural Baseline  
 Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)  
 
@@ -9,6 +9,8 @@ Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)
 ## 1. Architectural Invariant: Decoupled Decomposition
 
 MonARC enforces a four-piece decoupled architecture. Collapsing these subsystems into a single end-to-end Vision-Language-Action (VLA) model or allowing active policy components to consume raw camera pixels is strictly prohibited.
+
+v1 **does not change this decomposition**. It compresses Subsystem 1's geographic and storage scope to one operational corridor (default: Jefferson County / Colorado Front Range). Cost law: [`docs/cost.md`](./cost.md).
 
 ```
 +====================================================================================================+
@@ -24,14 +26,14 @@ MonARC enforces a four-piece decoupled architecture. Collapsing these subsystems
 |                                                                              |                     |
 |                                      +---------------------------------------+                     |
 |                                      v                                       v                     |
-|                     Continuous Aerial Feature Field             Inverted Metric Index              |
-|                     Phi_map: R^2 -> R^D                         code -> {xyz in R^3,               |
-|                                                                          constellation: {code_j,   |
-|                                                                                   d_ij, b_ij}}     |
+|                     Optional corridor interpolated field      Inverted Metric Index (v1 export)|
+|                     Phi_map: R^2 -> R^D                       code -> {xyz in R^3,               |
+|                     (on-demand / small corridor grid;                    constellation: {code_j,   |
+|                      never a dense CONUS fp16 / Zarr store)                    d_ij, b_ij}}     |
 +====================================================================================================+
                                                                                |
                                       +----------------------------------------+
-                                      | (Exported Local S2 Map Shard)
+                                      | (Exported corridor S2 shards; no global map onboard)
                                       v
 +====================================================================================================+
 |                               SUBSYSTEM 2: PERSPECTIVE ENCODER                                     |
@@ -42,7 +44,7 @@ MonARC enforces a four-piece decoupled architecture. Collapsing these subsystems
 |    [Frozen Vision Backbone / VGGT Sequence Geometry Tokens]                                        |
 |       |                                                                                            |
 |       v                                                                                            |
-|    [Contrastive BEV Alignment Head]  <-- Aligned to continuous feature field Phi_map               |
+|    [Contrastive BEV Alignment Head]  <-- Aligned to Phi_map (corridor interpolated field)            |
 |       |                                                                                            |
 |       v                                                                                            |
 |    [FSQ Discretization & Temperature-Calibrated Confidence Head]                                   |
@@ -58,7 +60,7 @@ MonARC enforces a four-piece decoupled architecture. Collapsing these subsystems
 |  Onboard State Estimation (Images NEVER enter this module):                                        |
 |    Inputs: S_t (Landmark Set), p(T_{t-1}) (Prior Pose Distribution), Local Map Index               |
 |       |                                                                                            |
-|       +--> (If Lost-in-Space): Coarse Global Retrieval (MegaLoc / code n-grams) -> Tile Seed       |
+|       +--> (If Lost-in-Space): Corridor Retrieval (MegaLoc / code n-grams) -> Tile Seed        |
 |       +--> Geometric Hypothesis Generation: Differentiable PnP (dPnP) Particle Initializer        |
 |       +--> Metric Constellation Verification: Resolve code aliasing via relative bearings/distances|
 |       |                                                                                            |
@@ -92,7 +94,7 @@ MonARC enforces a four-piece decoupled architecture. Collapsing these subsystems
 ## 2. Subsystem 1: Map Representation and Discrete Metric Codebook
 
 ### 2.1 The GLACE Dilemma in Large-Scale Geo-Localization
-Traditional Scene Coordinate Regression (SCR) methods (e.g., DSAC*, ACE) learn direct neural mappings from visual patches to absolute 3D world coordinates \( \mathbf{x} \in \mathbb{R}^3 \). As proven by Wang et al. (GLACE, CVPR 2024), scaling direct coordinate regression to continental scales encounters a fundamental dilemma:
+Traditional Scene Coordinate Regression (SCR) methods (e.g., DSAC*, ACE) learn direct neural mappings from visual patches to absolute 3D world coordinates \( \mathbf{x} \in \mathbb{R}^3 \). As proven by Wang et al. (GLACE, CVPR 2024), scaling direct coordinate regression toward continental extents encounters a fundamental dilemma. v1 does **not** attempt continental SCR; it indexes one corridor. The dilemma still applies inside repetitive Front Range suburbs and farmland, so the same structural split is required:
 - **Invariance Requirement**: The model must be invariant to viewpoint, illumination, seasonal changes, and sensor noise for the same geographic landmark.
 - **Discrimination Requirement**: The model must simultaneously discriminate between distinct geographic locations that exhibit near-identical visual appearances (e.g., suburban road grids, repetitive farmland, identical commercial buildings).
 
@@ -101,13 +103,16 @@ MonARC resolves the GLACE dilemma through structural separation:
 2. **Metric Constellation Indexing**: Spatial uniqueness is enforced geometrically rather than visually. The inverted index stores co-visible *metric constellations* (exact relative 3D distance vectors and angular bearings between adjacent landmarks). An ambiguous landmark code is disambiguated by the metric geometry of its co-visible cluster, not by memorizing world coordinates in neural network weights.
 
 ### 2.2 Dual-Access Map Representation
-The map is a single mathematical object \( \mathcal{M} \) accessed through two views:
-- **Continuous Aerial Feature Field \( \Phi_{\mathrm{map}}(\mathbf{p}) \)**: A continuous neural field or multi-scale interpolated grid mapping geodetic surface coordinates \( \mathbf{p} = (u_{\mathrm{geo}}, v_{\mathrm{geo}}) \in \mathbb{R}^2 \) to continuous feature representations \( \mathbf{z} \in \mathbb{R}^{D_v} \).
-- **Inverted Metric Landmark Index \( \mathcal{I}_{\mathrm{map}} \)**: An inverted table mapping discrete landmark code \( c \in \{0, \dots, K-1\} \) to occurrences \( \{ (\mathbf{x}_m, \mathcal{C}_m) \} \), where \( \mathbf{x}_m = (x, y, z)_m \in \mathbb{R}^3 \) in local UTM/EPSG coordinates and \( \mathcal{C}_m \) defines the local co-visibility constellation:
+The map is a single mathematical object \( \mathcal{M} \) accessed through two views. **v1 persists the inverted index.** The continuous view is interpolated/on-demand or a small corridor grid — not a dense continental fp16 / Zarr store.
+
+- **Aerial Feature Field \( \Phi_{\mathrm{map}}(\mathbf{p}) \)**: Mapping from geodetic surface coordinates \( \mathbf{p} = (u_{\mathrm{geo}}, v_{\mathrm{geo}}) \in \mathbb{R}^2 \) to continuous features \( \mathbf{z} \in \mathbb{R}^{D_v} \). In v1 this is reconstructed from FSQ codes or a small corridor interpolated grid. A continental dense field is expansion, not a v1 artifact.
+- **Inverted Metric Landmark Index \( \mathcal{I}_{\mathrm{map}} \)** (**v1 export**): An inverted table mapping discrete landmark code \( c \in \{0, \dots, K-1\} \) to occurrences \( \{ (\mathbf{x}_m, \mathcal{C}_m) \} \), where \( \mathbf{x}_m = (x, y, z)_m \in \mathbb{R}^3 \) in local UTM/EPSG coordinates and \( \mathcal{C}_m \) defines the local co-visibility constellation:
   \[
   \mathcal{C}_m = \left\{ \left( c_j, \Delta \mathbf{x}_{mj}, \theta_{mj} \right) \mid j \in \mathrm{Neighbors}(m), \, \|\Delta \mathbf{x}_{mj}\|_2 \le R_{\mathrm{covis}} \right\}
   \]
   where \( \Delta \mathbf{x}_{mj} = \mathbf{x}_j - \mathbf{x}_m \) is the relative 3D displacement vector and \( \theta_{mj} \) is the metric azimuth bearing.
+
+Landmarks stored in \( \mathcal{I}_{\mathrm{map}} \) are **emergent extrema** in the fused field (corners, junctions, roof geometry, terrain texture peaks). Do not index every DINOv2 token.
 
 ```
                       METRIC CONSTELLATION STRUCTURE
@@ -129,13 +134,14 @@ The map is a single mathematical object \( \mathcal{M} \) accessed through two v
 ### 2.3 Channel Ingestion and Fusion Stem
 Frozen visual foundation backbones (e.g., DINOv2-ViT-B/14) are strictly 3-channel RGB models. Concatenating 1-channel digital elevation models (USGS 3DEP DSM) and multi-channel rasterized vector geometries (Overture Maps / OSM building and road masks) directly to the RGB tensor violates the pretrained input domain.
 
-MonARC enforces the following ingestion pipeline:
+MonARC enforces the following ingestion pipeline. v1 inputs are the corridor bbox, range-read in `us-west-2`. Do not concatenate 6-channel tensors into frozen DINOv2.
 
 ```
 +-----------------------------------------------------------------------------+
 | INGESTION TENSOR SPECIFICATIONS                                             |
 |                                                                             |
 | Input 1: Orthophoto RGB       T_rgb in R^{B x 3 x H x W}                    |
+|          (v1: NAIP visualization COG, one vintage, ~0.6 m)              |
 | Input 2: 3DEP Elevation DSM   T_dsm in R^{B x 1 x H x W}                    |
 | Input 3: Vector Masks Raster  T_vec in R^{B x C_g x H x W}                  |
 |          (Channel 0: Road Centerlines, Channel 1: Building Footprints,      |
@@ -213,11 +219,11 @@ The Perspective Encoder is the sole onboard module where raw camera pixels are p
            +----------------+----------------+
                             |
                             v
-  Output Set: S_t = { (c_i, u_i, v_i, c_i) }_{i=1}^{N_t} (N_t ~ 32 to 128 tokens)
+  Output Set: S_t = { (c_i, u_i, v_i, c_i) }_{i=1}^{N_t} (sparse extrema; N_t ~ 32 to 128)
 ```
 
 ### 3.1 Contrastive Alignment to Ortho Feature Field
-Before discretization, perspective patch features \( \mathbf{z}_{\mathrm{persp}} \) are projected through a lightweight adapter network \( g_\theta \) and contrastively aligned to the continuous ortho feature field \( \Phi_{\mathrm{map}} \) using an InfoNCE objective:
+Before discretization, perspective patch features \( \mathbf{z}_{\mathrm{persp}} \) are projected through a lightweight adapter network \( g_\theta \) and contrastively aligned to the ortho feature field \( \Phi_{\mathrm{map}} \) (v1: corridor interpolated field or public-bench paired geodata) using an InfoNCE objective:
 \[
 \mathcal{L}_{\mathrm{align}} = -\log \frac{\exp\left( \langle g_\theta(\mathbf{z}_{\mathrm{persp}}), \Phi_{\mathrm{map}}(\mathbf{p}^*) \rangle / \tau \right)}{\sum_{\mathbf{p}'} \exp\left( \langle g_\theta(\mathbf{z}_{\mathrm{persp}}), \Phi_{\mathrm{map}}(\mathbf{p}') \rangle / \tau \right)}
 \]
@@ -247,8 +253,8 @@ The Where-Am-I head operates strictly on discrete landmark sets and geometric st
                                   |
                                   v
   [1. RETRIEVE-THEN-LOCALIZE PIPELINE]
-    * Lost-in-Space Mode: Global Descriptor / Code n-gram hash -> Top-K Map Tiles
-    * Tracking Mode: Query constrained to local S2 cell (radius ~ 500m)
+    * Lost-in-Space Mode: MegaLoc / code n-gram hash over the *corridor* index -> Top-K tiles
+    * Tracking Mode: Query constrained to local S2 cell (radius ~ 500m) inside loaded shards
                                   |
                                   v
   [2. GEOMETRIC HYPOTHESIS GENERATION (dPnP INITIALIZER)]
@@ -337,7 +343,7 @@ The Hunter policy controls the vehicle's gaze and trajectory to actively minimiz
 ```
 
 ### 5.1 Training Protocol: MPPI Expert to Transformer Distillation
-The Hunter is trained entirely within an abstract 2.5D frustum gym:
+The Hunter is trained entirely within an abstract 2.5D frustum gym on a **CPU** (laptop or workstation; millions of episodes). Game-engine visual gyms remain forbidden:
 1. **Expert Generation via Model Predictive Path Integral (MPPI)**:
    - Roll out candidate trajectory rollouts over horizon \( H \).
    - Reward function is strictly the expected drop in pose posterior Shannon entropy:
@@ -354,28 +360,29 @@ The Hunter is trained entirely within an abstract 2.5D frustum gym:
 
 ```
 +---------------------------------------------------------------------------------------+
-| OFFLINE WORKSTATION / CLUSTER INFRASTRUCTURE                                          |
+| OFFLINE (v1: us-west-2 next to open-data buckets; one corridor)                         |
 | Tasks:                                                                                |
-|   1. Mass Ingestion of NAIP (RGB), 3DEP (DSM), and Overture Vector Geo rasters        |
-|   2. Precomputing Continuous Aerial Feature Field Phi_map                             |
-|   3. FSQ Discretization and Inverted Metric Index Generation (I_map)                   |
-|   4. Partitioning global index into geographic S2 Level-12 Shards                     |
-| Compute Requirements:                                                                 |
-|   High-throughput GPU clusters, extensive storage bandwidth, GeoTIFF GDAL pipelines   |
+|   1. Range-read NAIP visualization COGs (one vintage) + corridor 3DEP + Overture bbox |
+|   2. Train fusion stem + FSQ on a sampled diverse tile set (frozen DINOv2)          |
+|   3. Infer FSQ codes on the v1 corridor; emit inverted metric index (LMDB/S2)      |
+|   4. Optional small corridor interpolated field — never a dense CONUS fp16 / Zarr   |
+|   5. Partition the *corridor* index into S2 Level-12 shards                          |
+| Compute: Frozen DINOv2 + small trainable stem on corridor/sample tiles.             |
+|          Not a continental GPU factory. See docs/cost.md.                           |
 +---------------------------------------------------------------------------------------+
                                            |
-                    (Pre-flight Mission Upload of Local Shards)
+                    (Pre-flight upload of corridor shards only)
                                            v
 +---------------------------------------------------------------------------------------+
 | ONBOARD UAV FLIGHT PAYLOAD                                                            |
-| Hardware Class: Embedded System-on-Module (e.g., Jetson-class edge accelerator)       |
+| Hardware Class: One Jetson-class System-on-Module                                    |
 | Real-Time Execution Loop:                                                             |
 |   1. Perspective Encoder: Thin Frozen ViT-S/B Backbone + FSQ Head                     |
-|   2. S2-Sharded Inverted Index Query over Local Corridor Working Set                  |
+|   2. S2-Sharded Inverted Index Query over Corridor Working Set                          |
 |   3. Perceiver Where-Am-I Estimation Head (Cross-Attention over Landmark Ties)        |
 |   4. Hunter Mode-Attention Transformer Policy (Distribution Tokens -> Action)         |
 | Architecture Property:                                                                |
-|   The giant object is the offline index; the flying payload runs a thin encoder,      |
-|   tiny Perceiver, and tiny hunter with local spatial cache working sets.               |
+|   The aircraft never carries a global map. Working set = corridor shards only.        |
+|   The offline object is the corridor inverted index, not a continental field.      |
 +---------------------------------------------------------------------------------------+
 ```

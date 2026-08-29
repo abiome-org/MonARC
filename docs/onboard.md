@@ -1,6 +1,6 @@
 # Onboard Embedded Runtime and SWaP-C Specifications
 
-Date: 2026-08-28  
+Date: 2026-08-29  
 Status: Embedded Hardware Specification  
 Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)  
 
@@ -9,8 +9,8 @@ Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)
 ## 1. Qualitative Onboard vs. Offline Compute Split
 
 MonARC establishes a clear asymmetry between offline index generation and onboard execution:
-- **Offline Infrastructure**: Ingests massive 2D/2.5D continental geodata (NAIP orthophotos, USGS 3DEP LiDAR DSMs, Overture vector rasters), computes continuous aerial feature fields, discretizes representations via FSQ, and builds the spatial inverted index. This runs on high-throughput workstation or cluster compute without flight-weight or power constraints.
-- **Onboard Flight Payload**: Operates in real time on an embedded System-on-Module (SOM) class processor (e.g., NVIDIA Jetson class or equivalent embedded edge accelerator). The drone never carries or evaluates the full global map. It runs a thin perspective encoder, a local spatial index cache, a compact Perceiver Where-Am-I state estimator, and a lightweight Hunter policy transformer.
+- **Offline Infrastructure (v1)**: Range-reads NAIP visualization COGs (one vintage), corridor 3DEP DSM, and Overture vectors in `us-west-2`. Trains fusion stem + FSQ on a sampled tile set with frozen DINOv2. Infers FSQ codes on the **v1 corridor only** (default: Jefferson County / Colorado Front Range) and writes an inverted metric index (LMDB/S2 shards). Does not ingest CONUS, does not store a dense continental fp16 field, and does not duplicate rasters. Cost law: [`docs/cost.md`](./cost.md).
+- **Onboard Flight Payload**: One Jetson-class System-on-Module. The drone **never carries a global map**. Working set is the **corridor shards only**. It runs a thin perspective encoder, a corridor S2 cache, a compact Perceiver Where-Am-I estimator, and a lightweight Hunter policy transformer.
 
 ```
 +===================================================================================================+
@@ -21,7 +21,7 @@ MonARC establishes a clear asymmetry between offline index generation and onboar
 |       | MIPI CSI-2 / GMSL2         | SPI / UART                 | I2C                             |
 |       v                            v                            v                                 |
 |  +---------------------------------------------------------------------------------------------+  |
-|  | EMBEDDED SYSTEM-ON-MODULE (SOM) (e.g., Jetson-Class Edge SOM / Embedded GPU + CPU)          |  |
+|  | EMBEDDED SYSTEM-ON-MODULE (SOM) — one Jetson-class payload                                  |  |
 |  |                                                                                             |  |
 |  | [Neural & Accelerated Perception Pipeline]       [Real-Time State Filter & I/O Thread]      |  |
 |  |   1. Perspective Encoder (Frozen ViT-S/B + FSQ)    1. High-Rate Inertial Propagation       |  |
@@ -88,10 +88,12 @@ Inference Engine:[Observed Engine / Precision: FP16, INT8, etc.]
 
 ## 3. Storage and Spatial Shard Management
 
-The global landmark index is partitioned offline into geographical S2 cells (Level-12 spatial shards). The drone payload loads only the local shards required for the assigned operational corridor:
-- **Local Working Set**: Active S2 shards are retained in RAM for immediate constant-time inverted index lookups.
-- **Dynamic Shard Paging**: As the vehicle approaches the spatial boundary of loaded shards, background I/O threads stream neighboring S2 shards from onboard non-volatile storage (NVMe SSD) into RAM without blocking the real-time inference loop.
-- **Independence from Global Index**: The drone never requires global database connectivity during flight; local metric constellations resolve visual code ambiguity within the active corridor.
+v1 has **no global map**. The corridor inverted index is partitioned offline into S2 cells (Level-12 spatial shards). The payload loads **corridor shards only**:
+- **Working Set**: Active corridor S2 shards in RAM for inverted index lookups.
+- **Paging inside the corridor**: As the vehicle approaches a loaded-shard boundary, background I/O may stream neighboring **corridor** shards from onboard NVMe into RAM. Do not page a continental catalog.
+- **No global map onboard**: The aircraft does not carry, download, or query an index outside the assigned corridor. Metric constellations resolve code ambiguity inside that corridor.
+
+One Jetson-class payload. Do not size storage for a CONUS working set.
 
 ---
 
