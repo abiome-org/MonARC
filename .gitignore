@@ -79,3 +79,6 @@ tensorboard/
 *.swp
 *.swo
 *~
+
+# Amp orb artifacts
+.amp/portals/

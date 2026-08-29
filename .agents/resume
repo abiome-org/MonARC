@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# MonARC orb resume. Runs on initial activation and every orb wake.
+# Must finish well within Amp's 10-second window: fast idempotent checks only,
+# never dependency installation or authentication.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [ ! -x "$REPO_ROOT/.venv/bin/python" ]; then
+  echo "[resume] .venv missing; .agents/setup will (re)install it"
+  exit 0
+fi
+
+# Cheap import check (numpy only; torch import alone can cost several seconds).
+if ! "$REPO_ROOT/.venv/bin/python" -c "import numpy" >/dev/null 2>&1; then
+  echo "[resume] .venv appears broken; rerun .agents/setup to repair"
+  exit 0
+fi
+
+echo "[resume] MonARC toolchain OK: $REPO_ROOT/.venv/bin/python"

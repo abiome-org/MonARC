@@ -1,0 +1,24 @@
+# MonARC development toolchain (installed into .venv by .agents/setup).
+#
+# Scope: core dependencies required by the modules defined in AGENTS.md.
+# PyTorch is installed separately from the CPU wheel index (see .agents/setup)
+# to avoid pulling multi-gigabyte CUDA runtime packages into the orb.
+#
+# Mapping to subsystems:
+#   numpy        - se3.py, frustum.py, posterior.py math primitives
+#   rasterio     - aflora_ingest.py NAIP/3DEP COG reading & warping
+#   pyproj       - coordinates.py WGS84/UTM/local NED conversions
+#   shapely      - Overture/OSM vector geometry handling before rasterization
+#   zarr         - continuous_field.py chunked feature field export
+#   lmdb         - metric_index.py inverted index storage
+#   s2sphere     - s2_shard.py spatial sharding for tracking-mode queries
+#   pytest       - tests/
+
+numpy
+rasterio
+pyproj
+shapely
+zarr
+lmdb
+s2sphere
+pytest

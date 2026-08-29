@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# MonARC orb setup. Runs once per fresh orb (before snapshot) and on stale
+# snapshots. Idempotent: every step checks for existing state before acting.
+# No foreground servers, no interactive prompts, no user/thread authentication.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+log() { printf '[setup] %s\n' "$*"; }
+
+# --- 1. System packages -------------------------------------------------------
+# geospatial CLI tools used by the Aflora ingestion pipeline (docs/data.md).
+# Python wheels (rasterio/pyproj/shapely) bundle their own native libraries,
+# so no libgdal-dev build stack is required.
+APT_PKGS=(gdal-bin)
+need_apt=()
+for pkg in "${APT_PKGS[@]}"; do
+  dpkg -s "$pkg" >/dev/null 2>&1 || need_apt+=("$pkg")
+done
+if [ "${#need_apt[@]}" -gt 0 ]; then
+  t0=$SECONDS
+  sudo apt-get update -qq
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${need_apt[@]}"
+  log "installed apt packages: ${need_apt[*]} ($((SECONDS - t0))s)"
+else
+  log "apt packages already present: ${APT_PKGS[*]}"
+fi
+
+# --- 2. Virtualenv ------------------------------------------------------------
+# Reuse the venv restored from a stale snapshot; rebuild only if missing.
+t0=$SECONDS
+if [ ! -x .venv/bin/python ]; then
+  log "creating virtualenv (.venv)"
+  python3 -m venv .venv
+fi
+log "virtualenv ready: $(.venv/bin/python -V) ($((SECONDS - t0))s)"
+
+# --- 3. Python dependencies ---------------------------------------------------
+# torch comes from the CPU wheel index so fresh orbs do not download the
+# CUDA runtime stack. Reinstall only when requirements-dev.txt, the python
+# version, or torch's index changes (stamp file records all three).
+stamp=".venv/.deps-stamp"
+fingerprint="$(sha256sum requirements-dev.txt | cut -d' ' -f1)|$(.venv/bin/python -V 2>&1)|cpu-torch"
+if [ ! -f "$stamp" ] || [ "$(cat "$stamp")" != "$fingerprint" ]; then
+  t0=$SECONDS
+  .venv/bin/pip install --quiet --upgrade pip
+  .venv/bin/pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+  .venv/bin/pip install --quiet -r requirements-dev.txt
+  printf '%s\n' "$fingerprint" > "$stamp"
+  log "python dependencies installed ($((SECONDS - t0))s)"
+else
+  log "python dependencies up to date (stamp match)"
+fi
+
+# --- 4. Sanity check ----------------------------------------------------------
+# Import every dependency once so a broken install fails setup loudly instead
+# of surfacing later inside agent work.
+t0=$SECONDS
+.venv/bin/python - <<'EOF'
+import numpy, rasterio, pyproj, shapely, zarr, lmdb, s2sphere, pytest, torch
+print(f"numpy {numpy.__version__} | rasterio {rasterio.__version__} | "
+      f"pyproj {pyproj.__version__} | torch {torch.__version__} "
+      f"(cuda: {torch.cuda.is_available()})")
+EOF
+log "dependency imports verified ($((SECONDS - t0))s)"
+
+# --- 5. Orb agent guidance ----------------------------------------------------
+# Non-repository note so agents inside the orb use the venv, not system Python.
+GUIDANCE_MARKER="# MonARC orb toolchain"
+GUIDANCE_FILE="$HOME/.config/amp/AGENTS.md"
+if ! grep -Fq "$GUIDANCE_MARKER" "$GUIDANCE_FILE" 2>/dev/null; then
+  mkdir -p "$(dirname "$GUIDANCE_FILE")"
+  cat >> "$GUIDANCE_FILE" <<EOF
+
+$GUIDANCE_MARKER
+- Python dependencies live in the repository virtualenv. Use \`$REPO_ROOT/.venv/bin/python\` and \`.venv/bin/pytest\`, not the system Python.
+- GDAL CLI tools (gdalinfo, gdalwarp, gdaltranslate) are on PATH for geodata inspection.
+EOF
+  log "appended toolchain guidance to ~/.config/amp/AGENTS.md"
+fi
+
+log "setup complete"
