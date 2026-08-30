@@ -1,6 +1,6 @@
 # Non-Goals, Architectural Boundaries, and Anti-Patterns
 
-Date: 2026-08-28  
+Date: 2026-08-30  
 Status: Out-of-Scope Architectural Registry  
 Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)  
 
@@ -23,6 +23,7 @@ To prevent scope creep and maintain strict architectural boundaries, the followi
 |  - Abstract 2.5D frustum gym RL                 - Heavyweight game engine sims (FSX)  |
 |  - 4-way decoupled modular subsystems           - Monolithic end-to-end VLA models    |
 |  - Discrete FSQ visual codebooks                - Continental 50-ft drone grid sweeps |
+|  - v1: Colorado-state index + public benches       - CONUS raster factory / dense fp16 field |
 +---------------------------------------------------------------------------------------+
 ```
 
@@ -44,7 +45,7 @@ To prevent scope creep and maintain strict architectural boundaries, the followi
 
 ### 2.4 Unconstrained Visual Guessing (Not GeoGuessr)
 - **Boundary**: MonARC is strictly map-conditioned. It never attempts open-world visual guessing or hallucinating coordinates from an un-mapped image without reference geodata.
-- **Constraint**: If an area has not been ingested into the continuous feature field and inverted metric index, MonARC reports indeterminate global uncertainty rather than emitting heuristic guesses.
+- **Constraint**: If an area has not been ingested into the inverted metric index (v1: Colorado), MonARC reports indeterminate global uncertainty rather than emitting heuristic guesses.
 
 ### 2.5 Street-Level Automotive Place Recognition (Not Ground VPR)
 - **Boundary**: Ground-level automotive VPR systems operate at 1.5 m AGL amidst vertical facades, pedestrians, and dynamic traffic. MonARC's visual codebook is tuned exclusively for top-down and nadir-oblique aerial perspectives (80–150 m AGL).
@@ -60,7 +61,7 @@ To prevent scope creep and maintain strict architectural boundaries, the followi
 
 ### 2.8 Game Engine and Flight Simulator Policy Gyms (Not MSFS or Unreal)
 - **Boundary**: Training active vision policies inside heavyweight 3D flight simulators (Microsoft Flight Simulator, Unreal Engine, Unity) is prohibited.
-- **Rationale**: 3D rendering engines introduce massive sim-to-real visual domain gaps and bottleneck policy rollout throughput to < 100 FPS. MonARC policies are trained at > 10,000 FPS in mathematical 2.5D frustum gyms operating directly over geodata arrays.
+- **Rationale**: 3D rendering engines introduce massive sim-to-real visual domain gaps and bottleneck policy rollout throughput. MonARC policies are trained on CPU in mathematical 2.5D frustum gyms (millions of episodes on a laptop or workstation) operating directly over geodata arrays.
 
 ### 2.9 Monolithic Vision-Language-Action (VLA) Architecture
 - **Boundary**: MonARC explicitly rejects single end-to-end transformers that map camera pixels directly to actuator actions.
@@ -68,10 +69,15 @@ To prevent scope creep and maintain strict architectural boundaries, the followi
 
 ### 2.10 Physical 50-Foot Continental Photographic Sweeps
 - **Boundary**: MonARC does not require or recommend flying drone camera grids at 50 ft AGL across the United States.
-- **Strategy**: The map is synthesized entirely from pre-existing open federal geodata (NAIP 0.5m orthophotos, USGS 3DEP LiDAR DSMs) and open vector geometry (Overture Maps).
+- **Strategy**: The map is synthesized from pre-existing open federal geodata. v1 uses NAIP visualization COGs (~0.6 m, one vintage) and Colorado 3DEP already-COG DSM, not a physical survey, not a county-only product, and not a CONUS ingest.
 
 ### 2.11 Unstructured Web Video Scraping
 - **Boundary**: Scraping video sharing platforms (e.g., YouTube drone compilations) is banned due to unknown camera intrinsics, unreliable GPS geotags, compression artifacts, and licensing liabilities.
 
 ### 2.12 Fabricated Performance Thresholds
 - **Boundary**: MonARC documentation, benchmarks, and pull requests must never claim unverified numeric gates (e.g., "99.8% precision everywhere"). All reported figures must derive from reproducible evaluation scripts and published dataset splits.
+
+### 2.13 v1 Cost Explosions (Not a CONUS Raster Factory)
+- **Boundary**: v1 must not ingest full-CONUS NAIP+3DEP, `naip-source` uncompressed archives, all historical NAIP years, CONUS 1 m lidar point clouds, Sentinel-2 / international coverage, or a dense CONUS fp16 / Zarr feature field. v1 must not egress-copy rasters to another cloud, train a new foundation backbone, require a custom flight-log campaign, hardcode geology/landcover classes, or put a CONUS map on the aircraft. v1 is Colorado-the-state, not one county.
+- **Law**: [`docs/cost.md`](./cost.md). Coverage is the **state of Colorado**. Jefferson County / Front Range may be a first slice, not the v1 product. CONUS is v2, gated on Colorado working. County-scale "few hundred dollars" was a slice line, not the v1 envelope. Do not invent invoices.
+- **Still banned**: 50 ft CONUS sweeps, YouTube, VLA, street VPR, H3-as-identity, MSFS/Unreal Hunter gyms.
