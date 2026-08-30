@@ -1,7 +1,7 @@
 # MonARC: Visual GPS-Denied Localization via Emergent Metric Landmarks
 
 Date: 2026-08-30  
-Status: Specification and Architecture Baseline  
+Status: Specification plus first executable CPU path (subsystems 1–3 dry-run)  
 Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)  
 License: MIT  
 
@@ -74,7 +74,7 @@ Detailed specifications, mathematical derivations, operating constraints, and en
 - [`AGENTS.md`](./AGENTS.md): Strict engineering laws, development invariants, codebase navigation, and modification protocols for autonomous agents and contributors.
 - [`docs/product.md`](./docs/product.md): Operational domain definition (80–150 m AGL), problem formulations, Turing-test localization criteria, and edge-case failure modes.
 - [`docs/architecture.md`](./docs/architecture.md): Complete subsystem breakdowns, tensor-level input/output signatures, fusion stems, GLACE dilemma resolution, and metric constellation schemas.
-- [`docs/cost.md`](./docs/cost.md): Binding v1 cost law: Colorado-state coverage, source products, storage, compute locality, planning envelope (not invoices).
+- [`docs/cost.md`](./docs/cost.md): Binding v1 cost law: Colorado-state coverage, cheap 2026 vendors, Golden–Morrison rehearsal slice, planning envelope (not invoices).
 - [`docs/data.md`](./docs/data.md): Data hierarchy (mass geodata vs. thin perspective pairs vs. abstract gym), dataset sources, licensing, and Aflora data factory ingestion pipelines.
 - [`docs/training.md`](./docs/training.md): Three-stage sequential training schedule, loss functions, confidence calibration formulations, and freeze requirements.
 - [`docs/evaluation.md`](./docs/evaluation.md): Protocol specifications, spatial/seasonal holdouts, metric reporting standards, and rejection of fabricated performance gates.
@@ -84,7 +84,60 @@ Detailed specifications, mathematical derivations, operating constraints, and en
 
 ---
 
-## 5. Non-Goals Summary
+## 5. First working model
+
+This repository now contains a CPU-executable subset of subsystems 1–3. Hunter/MPPI is not in this increment. Pose is matcher + PnP/LM, not a Perceiver-only regressor.
+
+### 5.1 Install and tests
+
+```
+python -m pip install -e ".[dev]"
+python -m pytest tests
+```
+
+Tests use a frozen patch-14 768-d DINOv2-B **contract stub**. They do not download DINOv2 weights, NAIP/3DEP rasters, or University-1652. CUDA is not required.
+
+### 5.2 Dry-run CLI
+
+Synthetic chips (no AWS): extract frozen-DINO-contract features, train a tiny FSQ projection, write a compact `codes.npy` + `xyz.npy` index, bag-of-codes retrieve, matcher + PnP/LM.
+
+```
+python -m monarc.cli dry-run --out artifacts/dry-run --steps 8 --seed 0
+```
+
+Observed numbers printed by that command are **that synthetic run only**. They are not Colorado flight metrics and not University-1652 Recall@1.
+
+### 5.3 AOI ingest (Golden–Morrison rehearsal)
+
+Intersects the 10×10 km box (center ~39.725°N, 105.220°W) with NAIP visualization STAC and 3DEP TNMAccess at launch time. Writes a manifest. Does not hardcode NAIP quarter-quad IDs. Does not download rasters.
+
+```
+python -m monarc.cli ingest-aoi --out artifacts/golden_morrison_manifest.json --offline tests/fixtures/inventory
+```
+
+Omit `--offline` only when live STAC/TNM HTTP is intended. v1 coverage remains Colorado-the-state; CONUS is v2. This box is a $150 rehearsal slice, not a rewrite of coverage ([`docs/cost.md`](./docs/cost.md) §12).
+
+### 5.4 Public-UAV bench (University-1652)
+
+University-1652 is the first loader: ImageFolder building IDs, optional local download, fixture for tests. OrthoLoC (~287 GB, npz+DOP/DSM, CC BY-NC-SA) is registered and deferred.
+
+```
+python -m monarc.cli bench-uav --list-benches
+python -m monarc.cli bench-uav --root /path/to/University-1652 --list-only
+```
+
+### 5.5 Two report tracks
+
+Keep these separate. Do not invent or copy numbers between them.
+
+1. **Colorado retrieval** — FSQ codes and xyz over ingested NAIP visualization + 3DEP inside Colorado (Golden–Morrison rehearsal first; the product remains the state).
+2. **Public-UAV adapter** — perspective encoder / retrieval on University-1652 (later DenseUAV, SUES-200, OrthoLoC).
+
+A metric is reportable only when a script, split, and saved artifact exist for that track ([`docs/evaluation.md`](./docs/evaluation.md)).
+
+---
+
+## 6. Non-Goals Summary
 
 MonARC is explicitly not:
 - An autopilot flight controller or PX4 replacement.
@@ -98,6 +151,6 @@ MonARC is explicitly not:
 
 ---
 
-## 6. License
+## 7. License
 
 MonARC is released under the terms of the [MIT License](./LICENSE).

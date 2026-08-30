@@ -45,6 +45,7 @@ Every autonomous agent and human contributor operating in this repository must a
    - Stage 1 trains fusion stem + FSQ on a sampled diverse tile set, then infers on Colorado. Frozen DINOv2. No foundation-model pretrain. Stage 2 uses public thin pairs only (University-1652, DenseUAV, SUES-200, OrthoLoC); no custom flight-log campaign. Stage 3 is a CPU frustum gym on a laptop/workstation. Onboard working set is Colorado mission shards on one Jetson-class payload; no CONUS/global map on the aircraft.
    - Cheap 2026 stack (listed prices as of late Aug 2026, not a measured bill): data plane AWS us-west-2 spot `g4dn.xlarge` / `g6.xlarge` with a VPC S3 gateway (no NAT); train plane Runpod/Vast/Salad RTX 4090, not A100/H100/`p4d`/`p5`; product store Cloudflare R2 (codes+index, target free tier). See [`docs/cost.md`](./docs/cost.md) §6 Compute Vendors.
    - Planning envelope: about $40–$150 first pass if hours stay in the T4/L4 + couple-of-4090-days band. Hours are the swing. County-scale "few hundred dollars" was a slice line, not the v1 product. Do not invent invoices. Binding detail: [`docs/cost.md`](./docs/cost.md).
+   - The Golden–Morrison 10×10 km box (center ~39.725°N, 105.220°W) is a **$150 rehearsal / first slice** inside Colorado for CPU ingest dry-run. It does not rewrite v1 coverage. See [`docs/cost.md`](./docs/cost.md) §12.
 
 ---
 
@@ -66,6 +67,7 @@ MonARC/
 |   +-- training.md             # 3-stage training pipeline, loss formulas, freeze schedule
 |   +-- evaluation.md           # Evaluation protocols, holdout splits, baseline standards
 |   +-- onboard.md              # Flight payload compute, execution profiling, memory models
+|   +-- cost.md                 # Colorado product boundary, rehearsal slice, cheap stack
 |   +-- literature.md           # Annotated bibliography with verified URLs
 |   +-- non-goals.md            # Out-of-scope capabilities and architectural anti-patterns
 +-- monarc/                     # Core Python library

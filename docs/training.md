@@ -164,3 +164,9 @@ where input state \( s = [ H(p(T_t)), \Delta \boldsymbol{\mu}_{\mathrm{modes}}, 
 | **Stage 3: CPU frustum gym Hunter**| **FROZEN** | **FROZEN** | **FROZEN** | **FROZEN** | **FROZEN** | TRAINABLE |
 
 This freeze schedule prevents catastrophic forgetting of the visual codebook and guarantees that the Colorado geodata index remains stationary after Stage 1 inference.
+
+---
+
+## 6. First executable increment
+
+`monarc dry-run` runs a few CPU steps of Stage 1 (fusion + FSQ projection; frozen DINO-contract stub). Stage 2 public-UAV alignment uses the University-1652 loader when a local tree is present. Stage 3 Hunter/MPPI is not trained in this increment. The v0 pose path is matcher + PnP/LM (`monarc.localization.dpnp`), not Perceiver regression.

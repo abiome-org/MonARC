@@ -15,6 +15,17 @@ MonARC enforces rigorous evaluation standards. Fabricating synthetic metric thre
 3. **Temporal & Vintage Shift**: Evaluation imagery must be tested against reference geodata from a different survey vintage (e.g., test 2024 UAV imagery against 2020 NAIP orthophotos) and across seasonal shifts (e.g., leaf-on training vs. leaf-off or snow-covered testing).
 4. **Campus Retrieval vs. Flight in Colorado**: Metrics on small academic datasets (e.g., University-1652 Recall@1) measure closed-world campus building retrieval, not GPS-denied flight. High academic retrieval numbers must never be conflated with the flight mission envelope. v1 flight claims, if any, are restricted to **Colorado** plus public benches — not CONUS and not "Jefferson County is the product."
 
+### 1.1 Two report tracks for the first working model
+
+Until Colorado NAIP/3DEP indexes and public-UAV adapters have separate executed evaluation artifacts, reports must name the track explicitly:
+
+| Track | What it measures | What it is not |
+| :--- | :--- | :--- |
+| **Colorado retrieval** | Map-side codes over ingested CO NAIP visualization + 3DEP xyz (Golden–Morrison 10×10 km rehearsal first; v1 product remains Colorado-the-state) | University-1652 Recall@1, OrthoLoC median translation |
+| **Public-UAV adapter** | Perspective encoder alignment / retrieval on University-1652 (and later DenseUAV / OrthoLoC) | GPS-denied Colorado flight ATE |
+
+Do not average, mix, or relabel these tracks. Do not publish numeric gates in documentation until a named script, split, and artifact exist for that track.
+
 ---
 
 ## 2. Benchmark Evaluation Protocols

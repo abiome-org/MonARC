@@ -387,3 +387,31 @@ The Hunter is trained entirely within an abstract 2.5D frustum gym on a **CPU** 
 |   shards. The offline object is the Colorado inverted index, not a continental field. |
 +---------------------------------------------------------------------------------------+
 ```
+
+---
+
+## 7. First Executable Path (v0 tensor contracts)
+
+This increment implements a CPU-runnable subset of subsystems 1–3. It does not implement Hunter/MPPI and does not make a Perceiver pose regressor the pose solver.
+
+```
+RGB [B, 3, H, W], H and W divisible by 14
+    -> FrozenDinoBackbone (DINOv2-B/14 contract: patch 14, D=768, frozen)
+    -> f_rgb [B, 768, H/14, W/14]
+
+DSM [B, 1, H, W] + vectors [B, 4, H, W]
+    -> FusionStem (trainable, never concatenated into the DINO input)
+    -> f_geo [B, 128, H/14, W/14]
+
+concat(f_rgb, f_geo) -> ChannelFusion -> f_fused [B, 256, H/14, W/14]
+    -> FSQHead (levels L, K = prod(L); no VQ-VAE embedding)
+    -> codes [B, H/14, W/14] integer, xyz [N, 3] ENU meters
+
+Lost-in-space retrieve: bag-of-codes (+ optional adjacent n-grams)
+Pose: code matcher -> 2D-3D ties -> DLT PnP + Levenberg-Marquardt on se(3)
+Persist: codes.npy, xyz.npy, meta.json (no GeoTIFF, no naip-source, no R2 rasters)
+```
+
+Official DINOv2-B weights are not downloaded by tests or the dry-run CLI. The dry-run uses a frozen patch-14 768-d stub that matches the tensor contract; a local weights file may be supplied later via `FrozenDinoBackbone(mode="vitb14", weights_path=...)`.
+
+The Perceiver set transformer remains specified in §4 as a later Where-Am-I path. v0 pose is matcher + geometry. Hunter (subsystem 4) is unspecified in code in this increment.

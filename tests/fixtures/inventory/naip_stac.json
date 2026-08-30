@@ -1,0 +1,53 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "fixture-naip-intersect-a",
+      "bbox": [-105.27, 39.69, -105.20, 39.74],
+      "properties": {
+        "datetime": "2023-09-01T00:00:00Z",
+        "gsd": 0.3,
+        "naip:state": "co",
+        "naip:year": "2023"
+      },
+      "assets": {
+        "image": {
+          "href": "https://naipeuwest.blob.core.windows.net/naip/v002/co/2023/co_030cm_2023/39105/m_fixture_aa_sw_13_030_19700101.tif"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fixture-naip-intersect-b",
+      "bbox": [-105.22, 39.71, -105.17, 39.76],
+      "properties": {
+        "datetime": "2021-07-15T00:00:00Z",
+        "gsd": 0.6,
+        "naip:state": "co",
+        "naip:year": "2021"
+      },
+      "assets": {
+        "image": {
+          "href": "https://naipeuwest.blob.core.windows.net/naip/v002/co/2021/co_060cm_2021/39105/m_fixture_bb_ne_13_060_19700101.tif"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fixture-naip-outside",
+      "bbox": [-107.5, 40.5, -107.4, 40.6],
+      "properties": {
+        "datetime": "2023-09-01T00:00:00Z",
+        "gsd": 0.3,
+        "naip:state": "co",
+        "naip:year": "2023"
+      },
+      "assets": {
+        "image": {
+          "href": "https://naipeuwest.blob.core.windows.net/naip/v002/co/2023/co_030cm_2023/40107/m_fixture_zz_nw_13_030_19700101.tif"
+        }
+      }
+    }
+  ]
+}
