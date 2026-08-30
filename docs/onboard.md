@@ -1,6 +1,6 @@
 # Onboard Embedded Runtime and SWaP-C Specifications
 
-Date: 2026-08-29  
+Date: 2026-08-30  
 Status: Embedded Hardware Specification  
 Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)  
 
@@ -9,8 +9,8 @@ Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)
 ## 1. Qualitative Onboard vs. Offline Compute Split
 
 MonARC establishes a clear asymmetry between offline index generation and onboard execution:
-- **Offline Infrastructure (v1)**: Range-reads NAIP visualization COGs (one vintage), corridor 3DEP DSM, and Overture vectors in `us-west-2`. Trains fusion stem + FSQ on a sampled tile set with frozen DINOv2. Infers FSQ codes on the **v1 corridor only** (default: Jefferson County / Colorado Front Range) and writes an inverted metric index (LMDB/S2 shards). Does not ingest CONUS, does not store a dense continental fp16 field, and does not duplicate rasters. Cost law: [`docs/cost.md`](./cost.md).
-- **Onboard Flight Payload**: One Jetson-class System-on-Module. The drone **never carries a global map**. Working set is the **corridor shards only**. It runs a thin perspective encoder, a corridor S2 cache, a compact Perceiver Where-Am-I estimator, and a lightweight Hunter policy transformer.
+- **Offline Infrastructure (v1)**: Range-reads NAIP visualization COGs (one vintage), Colorado 3DEP DSM, and Overture vectors in `us-west-2`. Trains fusion stem + FSQ on a sampled tile set with frozen DINOv2. Infers FSQ codes on **Colorado** (Jefferson County / Front Range may be a first slice) and writes an inverted metric index (LMDB/S2 shards). Does not ingest CONUS, does not store a dense CONUS fp16 / Zarr field, and does not duplicate rasters. Cost law: [`docs/cost.md`](./cost.md).
+- **Onboard Flight Payload**: One Jetson-class System-on-Module. The drone **never carries a CONUS / global map**. Working set is **mission shards from the Colorado index**. It runs a thin perspective encoder, a Colorado S2 cache, a compact Perceiver Where-Am-I estimator, and a lightweight Hunter policy transformer.
 
 ```
 +===================================================================================================+
@@ -32,7 +32,7 @@ MonARC establishes a clear asymmetry between offline index generation and onboar
 |  | [Unified System Memory]                                                                     |  |
 |  |   - Compact Neural Network Model Weights                                                    |  |
 |  |   - Dynamic Execution Scratchpad Buffers                                                    |  |
-|  |   - Local Corridor S2 Index Shards (Paged from Onboard Storage)                             |  |
+|  |   - Colorado Mission S2 Index Shards (Paged from Onboard Storage)                          |  |
 |  +---------------------------------------------------------------------------------------------+  |
 |                                            |                                                      |
 |                                            v MAVLink / CAN / Serial                               |
@@ -88,10 +88,10 @@ Inference Engine:[Observed Engine / Precision: FP16, INT8, etc.]
 
 ## 3. Storage and Spatial Shard Management
 
-v1 has **no global map**. The corridor inverted index is partitioned offline into S2 cells (Level-12 spatial shards). The payload loads **corridor shards only**:
-- **Working Set**: Active corridor S2 shards in RAM for inverted index lookups.
-- **Paging inside the corridor**: As the vehicle approaches a loaded-shard boundary, background I/O may stream neighboring **corridor** shards from onboard NVMe into RAM. Do not page a continental catalog.
-- **No global map onboard**: The aircraft does not carry, download, or query an index outside the assigned corridor. Metric constellations resolve code ambiguity inside that corridor.
+v1 has **no CONUS / global map**. The **Colorado** inverted index is partitioned offline into S2 cells (Level-12 spatial shards). The payload loads **mission shards from that Colorado index**:
+- **Working Set**: Active Colorado S2 shards in RAM for inverted index lookups (a subset of the state for the mission is allowed).
+- **Paging inside Colorado**: As the vehicle approaches a loaded-shard boundary, background I/O may stream neighboring **Colorado** shards from onboard NVMe into RAM. Do not page a CONUS catalog.
+- **No CONUS map onboard**: The aircraft does not carry, download, or query an index outside Colorado. Metric constellations resolve code ambiguity inside the loaded shards.
 
 One Jetson-class payload. Do not size storage for a CONUS working set.
 

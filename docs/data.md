@@ -1,6 +1,6 @@
 # Data Architecture and Geodata Pipeline
 
-Date: 2026-08-29  
+Date: 2026-08-30  
 Status: Data Law & Source Registry  
 Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)  
 
@@ -8,9 +8,11 @@ Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)
 
 ## 0. v1 Coverage (Binding)
 
-v1 ingest is **one operational corridor**, not CONUS. Default: Jefferson County, Colorado (Colorado Front Range). Align the bbox to Aflora's existing Jefferson County CO proof geometry. County borders are a clip, not landmark identity.
+**v1 / MonARC-1 ingest is the state of Colorado** (state-boundary or state bbox clip). It is not Jefferson County. It is not CONUS.
 
-Continental NAIP and 3DEP exist as **data availability**. That does not authorize a continental walk, a dense CONUS field, or Sentinel-2 / international coverage in v1. A full-CONUS inverted index is expansion: add corridors later. Cost, products, and storage: [`docs/cost.md`](./cost.md).
+Jefferson County / Colorado Front Range may be an **example ingest bbox** or a **first slice** inside Colorado (Aflora Jefferson County CO proof). That slice is not the v1 product boundary. State and county borders are clips, not landmark identity.
+
+Continental NAIP and 3DEP exist as **data availability**. **v2 is CONUS**, gated on Colorado actually working. Sentinel-2 / international coverage is out of v1. Cost, products, and storage: [`docs/cost.md`](./cost.md).
 
 ---
 
@@ -21,13 +23,14 @@ MonARC enforces a three-tier data hierarchy. Conflating these tiers or using hig
 ```
 +===================================================================================================+
 |                                  TIER A: MASS 2D/2.5D GEODATA                                     |
-|  Role: Offline Codebook Construction & Corridor Index                                              |
-|  v1 Volume: One operational corridor (county-scale). Not terabytes-to-petabytes of CONUS.       |
+|  Role: Offline Codebook Construction & Colorado Index                                               |
+|  v1 Volume: State of Colorado. Not one county. Not terabytes-to-petabytes of CONUS.              |
 |  v1 Sources (range-read in us-west-2; do not duplicate rasters):                                 |
 |    - NAIP visualization COGs, one vintage, native ~0.6 m GSD (s3://naip-visualization)           |
-|    - USGS 3DEP already-COG DSM/DEM for the corridor bbox (prefer 1/9 arc-second ~3 m)            |
-|    - Overture Maps / OSM vector geometry clipped to the same bbox                                |
-|  Availability (not a v1 build): Full CONUS NAIP+3DEP. Expansion only.                           |
+|    - USGS 3DEP already-COG DSM/DEM for the Colorado clip (prefer 1/9 arc-second ~3 m)           |
+|    - Overture Maps / OSM vector geometry clipped to Colorado                                     |
+|    - Optional first slice: Jefferson County / Front Range (not the product boundary)              |
+|  Availability (not a v1 build): Full CONUS NAIP+3DEP. v2, gated on Colorado working.            |
 |  Out of v1: Sentinel-2, international basemaps, naip-source, all historical years, CONUS 1 m lidar |
 +===================================================================================================+
                                                   |
@@ -60,32 +63,32 @@ MonARC enforces a three-tier data hierarchy. Conflating these tiers or using hig
 
 The landmark field relies exclusively on authoritative federal geodata and open vector geometry. Scraping unverified commercial imagery or unstructured video feeds (e.g., YouTube) is forbidden.
 
-v1 **reads** these products for the corridor bbox in `us-west-2`. Aflora may store source-byte pointers, small prefixes, and hashes. MonARC must not store a second copy of the rasters.
+v1 **reads** these products for the **Colorado clip** in `us-west-2`. Aflora may store source-byte pointers, small prefixes, and hashes. MonARC must not store a second copy of the rasters. Do not hardcode geology or landcover class maps as landmarks.
 
 ### 2.1 National Agriculture Imagery Program (NAIP)
 - **Provider**: USDA Farm Service Agency / USGS EROS.
 - **v1 Access**: AWS Open Data `s3://naip-visualization/` (JPEG Cloud-Optimized GeoTIFF). Range-read from `us-west-2`.
 - **Forbidden for v1**: `naip-source` uncompressed GeoTIFFs; all historical years; the 16 PB-class raw program archive; a 0.3 m GSD mandate when 0.6 m visualization tiles exist.
-- **v1 Resolution**: Native visualization GSD (~0.6 m). Do not resample the corridor to 0.3 m as a requirement.
+- **v1 Resolution**: Native visualization GSD (~0.6 m). Do not resample Colorado to 0.3 m as a requirement.
 - **Spectral Bands**: RGB from the visualization COGs. NIR is not required for v1.
-- **Vintage**: **One** vintage covering the corridor.
+- **Vintage**: **One** vintage covering Colorado.
 - **License**: US Public Domain (no copyright restrictions).
-- **Availability (not v1 ingest)**: NAIP exists across CONUS. Full-CONUS ingest is expansion.
+- **Availability (not v1 ingest)**: NAIP exists across CONUS. Full-CONUS ingest is v2, gated on Colorado working.
 
 ### 2.2 USGS 3D Elevation Program (3DEP)
 - **Provider**: United States Geological Survey.
 - **Access Portal**: [USGS 3D Elevation Program (3DEP)](https://www.usgs.gov/3d-elevation-program) / AWS Open Data `s3://prd-tnm/StagedProducts/Elevation/`.
-- **v1 Products**: The cheapest already-COG product that still supplies metric \( z \) inside the corridor bbox. Prefer 1/9 arc-second (~3 m) DSM/DEM. 1 m rasters are allowed only for that bbox, and only if ~3 m is insufficient for constellation geometry.
+- **v1 Products**: The cheapest already-COG product that still supplies metric \( z \) inside the Colorado clip. Prefer 1/9 arc-second (~3 m) DSM/DEM. 1 m rasters are allowed only inside Colorado, and only if ~3 m is insufficient for constellation geometry.
 - **Forbidden for v1**: CONUS 1 m lidar point clouds; continental 1 m DSM mosaics.
-- **Role in MonARC**: Provides true metric vertical coordinates \( z \) for the inverted index. MonARC prohibits synthetic height extraction via mono-depth foundation models on orthophotos when authoritative 3DEP exists in the corridor.
+- **Role in MonARC**: Provides true metric vertical coordinates \( z \) for the inverted index. MonARC prohibits synthetic height extraction via mono-depth foundation models on orthophotos when authoritative 3DEP exists in Colorado.
 - **License**: US Public Domain.
 
 ### 2.3 Overture Maps Foundation & OpenStreetMap Geometry
 - **Provider**: Overture Maps Foundation / OpenStreetMap Contributors.
 - **Access Portal**: [Overture Maps Foundation](https://overturemaps.org/) / AWS S3 `s3://overturemaps-us-west-2/release/`.
-- **v1 Extent**: Clip to the corridor bbox. Do not rasterize CONUS.
+- **v1 Extent**: Clip to Colorado. Do not rasterize CONUS. Jefferson County may be a first slice.
 - **Layers Ingested**:
-  - `buildings`: Polygon footprint outlines (names and tenant tags discarded).
+  - `buildings`: Polygon footprint outlines (names, tenant tags, geology classes, and landcover labels discarded).
   - `transportation`: Road network centerlines and class flags (motorway, primary, residential, unpaved).
   - `water`: River and shoreline boundary polygons.
 - **Rasterization Schema**: Vector layers are rasterized into a multi-channel binary tensor aligned to the NAIP visualization grid at the native visualization GSD.
@@ -95,7 +98,7 @@ v1 **reads** these products for the corridor bbox in `us-west-2`. Aflora may sto
 - **Provider**: European Space Agency (ESA) Copernicus Programme.
 - **Access Portal**: [Copernicus Data Space Ecosystem](https://dataspace.copernicus.eu/).
 - **Resolution**: 10 m GSD (RGB + NIR).
-- **Role**: Expansion only — coarse context outside CONUS NAIP coverage. **Not a v1 source.**
+- **Role**: Out of v1. Coarse context outside CONUS NAIP coverage is v2+ at earliest. **Not a v1 source.**
 - **License**: Free, full, and open access under EU Copernicus legal notice.
 
 ---
@@ -148,34 +151,35 @@ Do not stand up Unreal, 3DGS, or GISNav because they exist. Record the Stage 2 f
 
 ## 6. Aflora Automated Ingestion Pipeline
 
-Aflora **does not copy** NAIP/3DEP rasters into a second object store. It may warehouse source-byte pointers, small prefixes, and hashes. GDAL warp, frozen DINOv2, fusion, FSQ, and index export run in **`us-west-2`** on the **v1 corridor only**.
+Aflora **does not copy** NAIP/3DEP rasters into a second object store. It may warehouse source-byte pointers, small prefixes, and hashes. GDAL warp, frozen DINOv2, fusion, FSQ, and index export run in **`us-west-2`** on **Colorado**. A Jefferson County slice may run first; the v1 product is the state.
 
 ```
                             AFLORA INGESTION PIPELINE (v1)
                             
   Pointers / hashes to:
-  USGS 3DEP COGs (corridor bbox)  ----+
+  USGS 3DEP COGs (Colorado clip)  ----+
                                         |
   NAIP visualization COGs --------------+--> [GDAL / Rasterio Warper in us-west-2]
   (one vintage, range-read)            |    * Reproject to local UTM/EPSG
                                         |    * Align to native visualization GSD (~0.6 m)
-  Overture Maps (GeoParquet, bbox) -----+    * Tile chunks for the corridor only
+  Overture Maps (GeoParquet, CO) -----+    * Tile chunks for Colorado (slice allowed first)
                                                  |
                                                  v
                                         [Inference Pipeline]
                                          * Frozen DINOv2 on RGB
                                          * Fusion Stem on DSM + Vector
                                          * FSQ Codebook Quantization
-                                         * Landmark extrema (not every token)
+                                         * Landmark extrema (not every token;
+                                           not geology/landcover class maps)
                                                  |
                                                  v
                                         [Export Artifacts]
-                                         * FSQ codes (corridor)
+                                         * FSQ codes (Colorado)
                                          * Inverted Metric Index (LMDB/S2 shards)
-                                         * Optional: small corridor interpolated field
-                                           (NOT a dense continental Zarr / fp16 grid)
+                                         * Optional: on-demand interpolated field
+                                           (NOT a dense CONUS Zarr / fp16 grid)
 ```
 
-Stage 1 **training** of the fusion stem and FSQ uses a **sampled** diverse tile set (multiple biomes, tiny versus CONUS). Stage 1 **inference** that writes the index runs only on the v1 corridor. See [`docs/training.md`](./training.md).
+Stage 1 **training** of the fusion stem and FSQ uses a **sampled** diverse tile set (multiple biomes, tiny versus CONUS). Stage 1 **inference** that writes the index runs on **Colorado**. See [`docs/training.md`](./training.md).
 
-Expansion adds further corridors with the same pipeline. It does not require a CONUS raster factory as a prerequisite.
+v2 adds further states with the same pipeline **after Colorado works**. It does not require a CONUS raster factory as a v1 prerequisite.

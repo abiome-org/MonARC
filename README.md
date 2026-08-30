@@ -1,6 +1,6 @@
 # MonARC: Visual GPS-Denied Localization via Emergent Metric Landmarks
 
-Date: 2026-08-29  
+Date: 2026-08-30  
 Status: Specification and Architecture Baseline  
 Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)  
 License: MIT  
@@ -11,17 +11,17 @@ License: MIT
 
 MonARC is a map-conditioned, camera-only visual localization system designed for unmanned aerial vehicles (UAVs) operating in GPS-denied environments at altitudes of 80 to 150 meters above ground level (AGL). Given an onboard camera stream and an offline geo-indexed visual landmark field, MonARC solves both the cold-start "lost-in-space" problem (zero initial pose prior) and continuous 6-DoF trajectory tracking by estimating an SE(3) pose posterior without active RF signals, magnetic compass trust, or pre-flown perspective visual databases. The name derives from *monarch* (biological long-distance navigation over emergent visual cues) and *Automatic Retrieval Course*.
 
-v1 ingest is **one operational corridor** (default: Jefferson County / Colorado Front Range). Continental NAIP+3DEP is data availability, not a v1 build. Binding cost law: [`docs/cost.md`](./docs/cost.md).
+**v1 / MonARC-1 coverage is the state of Colorado** (state-boundary or bbox clip). Jefferson County / Front Range may be a first slice, not the product boundary. CONUS is v2, gated on Colorado working. Binding cost law: [`docs/cost.md`](./docs/cost.md).
 
 ```
 +---------------------------------------------------------------------------------------+
-|                     OFFLINE INGESTION (v1: ONE CORRIDOR, us-west-2)                  |
-|  NAIP visualization COGs (one vintage) + corridor 3DEP DSM + Overture/OSM (bbox)    |
+|                     OFFLINE INGESTION (v1: COLORADO, us-west-2)                   |
+|  NAIP visualization COGs (one vintage) + Colorado 3DEP DSM + Overture/OSM (state clip)|
 |       |                     |                                                         |
 |  [Frozen DINOv2]      [Fusion Stem]                                                   |
 |       \                     /                                                         |
-|        +-----> [FSQ Quantizer] -----> FSQ codes + Inverted Metric Index (corridor)     |
-|                                   (optional small corridor field; not CONUS Zarr)    |
+|        +-----> [FSQ Quantizer] -----> FSQ codes + Inverted Metric Index (Colorado)     |
+|                                   (optional on-demand field; not CONUS Zarr)        |
 +---------------------------------------------------------------------------------------+
                                                                 |
 +---------------------------------------------------------------+-----------------------+
@@ -33,7 +33,7 @@ v1 ingest is **one operational corridor** (default: Jefferson County / Colorado 
 |       +--> {code, pixel_uv, confidence}                                               |
 |                 |                                                                     |
 |                 v                                                                     |
-|  [Where-Am-I Head] <------- Corridor Metric Index (S2 Shards; no global map onboard) |
+|  [Where-Am-I Head] <------- Colorado Metric Index (S2 Shards; no CONUS map onboard)   |
 |       |                                                                               |
 |       +--> SE(3) Pose Posterior (Particles / Mixture Modes)                           |
 |                 |                                                                     |
@@ -50,10 +50,10 @@ v1 ingest is **one operational corridor** (default: Jefferson County / Colorado 
 
 MonARC enforces a strict four-subsystem decoupled architecture. Under no circumstance is the policy network permitted to observe raw pixels, nor is the system collapsed into an end-to-end Vision-Language-Action (VLA) model:
 
-1. **Map Representation and Codebook**: Dual-access geodata, **v1-scoped to one corridor**. Ingestion combines NAIP visualization RGB through a frozen DINOv2 backbone with corridor 3DEP DSM and vector geometry rasters (OSM/Overture building/road masks) through a lightweight fusion stem. Finite Scalar Quantization (FSQ) emits discrete codes. The v1 export is an inverted metric index (code → 3D coordinates and co-visible bearings), plus an optional small corridor interpolated field. Landmarks are emergent extrema, not every DINOv2 token. A dense continental feature field is expansion, not v1.
+1. **Map Representation and Codebook**: Dual-access geodata, **v1-scoped to Colorado**. Ingestion combines NAIP visualization RGB through a frozen DINOv2 backbone with Colorado 3DEP DSM and vector geometry rasters (OSM/Overture building/road masks) through a lightweight fusion stem. Finite Scalar Quantization (FSQ) emits discrete codes. The v1 export is an inverted metric index (code → 3D coordinates and co-visible bearings). Landmarks are emergent extrema, not every DINOv2 token and not hardcoded geology/landcover classes. A dense CONUS feature field is v2+, not v1.
 2. **Perspective Encoder**: An onboard perception module executing a frozen vision backbone (or geometric tokens from a sequence transformer) with a lightweight projection head that aligns oblique perspectives to the orthographic metric feature space before FSQ discretization. Outputs sparse sets of `{code, pixel_uv, confidence}` tuples. Perspective pixels are consumed only here.
-3. **Where-Am-I Estimation Head**: A set transformer (Perceiver-style architecture) taking sparse landmark correspondences and the prior pose distribution to regress log-weights and \( \mathfrak{se}(3) \) corrections over an SE(3) pose posterior. Retrieval (MegaLoc-class or code n-grams) seeds lost-in-space over the **designated corridor**, differentiable PnP initializes particle clusters using true DSM metric heights, and metric constellation geometry breaks code aliasing inside that corridor. The aircraft does not carry a global map.
-4. **Hunter Active Perception Policy**: A compact transformer policy operating entirely on pose posterior entropy, mode dispersions, and rim landmark codes. Trained offline via Model Predictive Path Integral (MPPI) / Cross-Entropy Method (CEM) on expected information gain within an idealized camera frustum gym (CPU; laptop/workstation) and cloned into an onboard actor. Emits gaze and flight steering commands to actively reduce localization entropy.
+3. **Where-Am-I Estimation Head**: A set transformer (Perceiver-style architecture) taking sparse landmark correspondences and the prior pose distribution to regress log-weights and \( \mathfrak{se}(3) \) corrections over an SE(3) pose posterior. Retrieval (MegaLoc-class or code n-grams) seeds lost-in-space over the **Colorado index** (or a declared mission bbox inside Colorado). Differentiable PnP initializes particle clusters using true DSM metric heights, and metric constellation geometry breaks code aliasing. The aircraft does not carry a CONUS / global map.
+4. **Hunter Active Perception Policy**: A compact transformer policy operating entirely on pose posterior entropy, mode dispersions, and rim landmark codes. Trained offline via Model Predictive Path Integral (MPPI) / Cross-Entropy Method (CEM) on expected information gain within an idealized camera frustum gym (CPU; laptop/workstation) and cloned into an onboard actor. Emits gaze and flight steering commands to actively reduce localization entropy. The policy never observes pixels (VLA ban).
 
 ---
 
@@ -61,7 +61,7 @@ MonARC enforces a strict four-subsystem decoupled architecture. Under no circums
 
 MonARC forbids grid-based aerial photographic sweeps of the continental United States at 50 ft AGL and bans flight simulator visual scrapers (such as MSFS or Unreal Engine) for policy training.
 
-**v1 is corridor-first.** Ingest one operational corridor (default: Jefferson County / Colorado Front Range). Pull a single NAIP vintage from `s3://naip-visualization` (JPEG COG, ~0.6 m is the default; do not require 0.3 m). Prefer already-COG 3DEP 1/9 arc-second (~3 m) or 1 m only inside the corridor bbox. Process in `us-west-2`; range-read; do not duplicate rasters. Export FSQ codes and an inverted metric index for the corridor — not a dense continental fp16 field. Stage 1 trains on a sampled tile set, then infers on the corridor. Stage 2 uses public UAV benches only (University-1652, DenseUAV, SUES-200, OrthoLoC); no custom flight-log campaign. Stage 3 is a CPU frustum gym. A full-CONUS index is expansion. Sentinel-2 / international coverage is out of v1. Detail: [`docs/cost.md`](./docs/cost.md).
+**v1 is Colorado-the-state, not one county and not CONUS.** Clip ingest to the Colorado state boundary or state bbox. Jefferson County / Front Range may be a first slice. Pull a single NAIP vintage from `s3://naip-visualization` (JPEG COG, ~0.6 m is the default; do not require 0.3 m). Prefer already-COG 3DEP 1/9 arc-second (~3 m) or 1 m only inside Colorado. Process in `us-west-2`; range-read; do not duplicate rasters. Export FSQ codes and an inverted metric index for Colorado — not a dense CONUS fp16 / Zarr field. Stage 1 trains on a sampled tile set, then infers on Colorado. Stage 2 uses public UAV benches only (University-1652, DenseUAV, SUES-200, OrthoLoC); no custom flight-log campaign. Stage 3 is a CPU frustum gym (no Unreal). CONUS ingest is v2, gated on Colorado working. Sentinel-2 / international coverage is out of v1. Detail: [`docs/cost.md`](./docs/cost.md).
 
 The landmark field is constructed exclusively from open federal geodata (NAIP, USGS 3DEP) and open vector geometry (Overture Maps, OpenStreetMap). Real perspective pairs for cross-view alignment are sourced from rigorously geo-referenced public UAV benchmarks. Active vision policies are trained exclusively inside abstract frustum environments against noisy landmark fields.
 
@@ -74,7 +74,7 @@ Detailed specifications, mathematical derivations, operating constraints, and en
 - [`AGENTS.md`](./AGENTS.md): Strict engineering laws, development invariants, codebase navigation, and modification protocols for autonomous agents and contributors.
 - [`docs/product.md`](./docs/product.md): Operational domain definition (80–150 m AGL), problem formulations, Turing-test localization criteria, and edge-case failure modes.
 - [`docs/architecture.md`](./docs/architecture.md): Complete subsystem breakdowns, tensor-level input/output signatures, fusion stems, GLACE dilemma resolution, and metric constellation schemas.
-- [`docs/cost.md`](./docs/cost.md): Binding v1 cost law: corridor coverage, source products, storage, compute locality, planning envelope (not invoices).
+- [`docs/cost.md`](./docs/cost.md): Binding v1 cost law: Colorado-state coverage, source products, storage, compute locality, planning envelope (not invoices).
 - [`docs/data.md`](./docs/data.md): Data hierarchy (mass geodata vs. thin perspective pairs vs. abstract gym), dataset sources, licensing, and Aflora data factory ingestion pipelines.
 - [`docs/training.md`](./docs/training.md): Three-stage sequential training schedule, loss functions, confidence calibration formulations, and freeze requirements.
 - [`docs/evaluation.md`](./docs/evaluation.md): Protocol specifications, spatial/seasonal holdouts, metric reporting standards, and rejection of fabricated performance gates.
@@ -94,7 +94,7 @@ MonARC is explicitly not:
 - A street-level visual place recognition pipeline designed for automotive ground views.
 - A semantic taxonomy reliant on human labels, business categories, or administrative boundaries.
 - An end-to-end monolithic Vision-Language-Action (VLA) network.
-- A v1 CONUS raster factory, dense continental fp16 field, or day-one Sentinel-2 / international ingest. See [`docs/cost.md`](./docs/cost.md).
+- A v1 CONUS raster factory, dense continental fp16 field, or day-one Sentinel-2 / international ingest. v1 is Colorado-the-state. See [`docs/cost.md`](./docs/cost.md).
 
 ---
 

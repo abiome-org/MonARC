@@ -1,6 +1,6 @@
 # Training Pipeline and Loss Formulations
 
-Date: 2026-08-29  
+Date: 2026-08-30  
 Status: Training Protocol Specification  
 Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)  
 
@@ -10,16 +10,16 @@ Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)
 
 MonARC enforces a strictly staged, decoupled training pipeline. End-to-end backpropagation across the entire system is architecturally prohibited.
 
-**v1 does not walk the country, does not pretrain a foundation model, and does not require a custom flight campaign.** Cost law: [`docs/cost.md`](./cost.md).
+**v1 does not walk CONUS, does not pretrain a foundation model, and does not require a custom flight campaign.** Inference coverage is **Colorado**. Cost law: [`docs/cost.md`](./cost.md).
 
 ```
 +===================================================================================================+
-| STAGE 1: SAMPLED CODEBOOK + CORRIDOR INFERENCE                                                     |
+| STAGE 1: SAMPLED CODEBOOK + COLORADO INFERENCE                                                     |
 | Train: Fusion Stem theta_geo + Fusion MLP theta_fuse + FSQ Projection theta_fsq                     |
 |        on a *sampled* diverse tile set (multiple biomes; tiny versus CONUS)                        |
-| Infer: Frozen stack on the v1 corridor only (Jefferson County / Front Range default)              |
+| Infer: Frozen stack on Colorado (Jefferson County / Front Range may be a first slice)           |
 | Frozen: Pretrained DINOv2 RGB backbone. No foundation-model pretrain.                               |
-| Export: FSQ codes + inverted metric index (optional small corridor field). Not a CONUS fp16 grid. |
+| Export: FSQ codes + inverted metric index for Colorado. Not a CONUS fp16 / Zarr grid.           |
 +===================================================================================================+
                                                   |
                                                   v  (Freeze Stage 1 Weights & Codebook)
@@ -46,12 +46,12 @@ MonARC enforces a strictly staged, decoupled training pipeline. End-to-end backp
 
 ---
 
-## 2. Stage 1: Sampled Codebook Training and Corridor Inference
+## 2. Stage 1: Sampled Codebook Training and Colorado Inference
 
 Stage 1 is **not** a continental feature-field pretrain. It has two sequential jobs:
 
 1. **Train** the fusion stem and FSQ on a sampled diverse tile set (multiple biomes). The sample is small relative to CONUS. Do not iterate every NAIP tile in the United States.
-2. **Infer** the frozen encoder + FSQ on the **v1 corridor only**. Persist FSQ codes and the inverted metric index. Landmarks are emergent extrema, not every DINOv2 token. Do not write a dense continental fp16 / Zarr field.
+2. **Infer** the frozen encoder + FSQ on **Colorado**. A Jefferson County slice may run first. Persist FSQ codes and the inverted metric index. Landmarks are emergent extrema, not every DINOv2 token and not hardcoded geology/landcover classes. Do not write a dense CONUS fp16 / Zarr field.
 
 DINOv2 remains frozen. Do not train a new foundation visual backbone.
 
@@ -90,7 +90,7 @@ Stage 1 is optimized using a dual-objective loss:
   \mathcal{L}_{\mathrm{spatial}} = \sum_{i,j} \|\hat{\mathbf{z}}_{i+1,j} - \hat{\mathbf{z}}_{i,j}\|_2^2 + \|\hat{\mathbf{z}}_{i,j+1} - \hat{\mathbf{z}}_{i,j}\|_2^2
   \]
 
-Query field \( \Phi_{\mathrm{map}} \) used in Stage 2 is the **corridor** representation: interpolated from FSQ codes / a small corridor grid, not a continental dense store.
+Query field \( \Phi_{\mathrm{map}} \) used in Stage 2 is the **Colorado** representation: interpolated from FSQ codes / a working-set grid, not a continental dense store.
 
 ---
 
@@ -102,7 +102,7 @@ v1 Stage 2 trains **only** on University-1652, DenseUAV, SUES-200, and OrthoLoC.
 Given an oblique drone camera frame \( \mathbf{I}_{\mathrm{persp}} \) with calibrated camera intrinsics \( \mathbf{K} \) and true 6-DoF pose \( T^* \), each perspective patch \( p \) has a ray intersection \( \mathbf{x}_p^* = (x, y, z)_p^* \) on the 3DEP ground surface (or the bench's supplied DSM).
 
 1. Compute perspective token \( \mathbf{z}_p = g_{\psi_{\mathrm{persp}}}(\mathrm{DINOv2}(\mathbf{I}_{\mathrm{persp}})_p) \).
-2. Query the aerial field \( \Phi_{\mathrm{map}}(\mathbf{x}_p^*) \) (corridor interpolated field or the bench's paired geodata field).
+2. Query the aerial field \( \Phi_{\mathrm{map}}(\mathbf{x}_p^*) \) (Colorado interpolated field or the bench's paired geodata field).
 3. Compute the multi-negative InfoNCE contrastive loss:
    \[
    \mathcal{L}_{\mathrm{align}} = -\frac{1}{N_p} \sum_{p=1}^{N_p} \log \frac{\exp\left( \langle \mathbf{z}_p, \Phi_{\mathrm{map}}(\mathbf{x}_p^*) \rangle / \tau \right)}{\exp\left( \langle \mathbf{z}_p, \Phi_{\mathrm{map}}(\mathbf{x}_p^*) \rangle / \tau \right) + \sum_{k=1}^{N_{\mathrm{neg}}} \exp\left( \langle \mathbf{z}_p, \Phi_{\mathrm{map}}(\mathbf{x}_{p,k}^{\mathrm{neg}}) \rangle / \tau \right)}
@@ -159,8 +159,8 @@ where input state \( s = [ H(p(T_t)), \Delta \boldsymbol{\mu}_{\mathrm{modes}}, 
 
 | Training Stage | DINOv2 RGB Backbone | Fusion Stem | FSQ Quantizer | Perspective Adapter | Where-Am-I Perceiver | Hunter Policy |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Stage 1: Sampled codebook + corridor infer** | **FROZEN** | TRAINABLE | TRAINABLE | N/A | N/A | N/A |
+| **Stage 1: Sampled codebook + Colorado infer** | **FROZEN** | TRAINABLE | TRAINABLE | N/A | N/A | N/A |
 | **Stage 2: Public-bench cross-view** | **FROZEN** | **FROZEN** | **FROZEN** | TRAINABLE | TRAINABLE | N/A |
 | **Stage 3: CPU frustum gym Hunter**| **FROZEN** | **FROZEN** | **FROZEN** | **FROZEN** | **FROZEN** | TRAINABLE |
 
-This freeze schedule prevents catastrophic forgetting of the visual codebook and guarantees that the corridor geodata index remains stationary after Stage 1 inference.
+This freeze schedule prevents catastrophic forgetting of the visual codebook and guarantees that the Colorado geodata index remains stationary after Stage 1 inference.

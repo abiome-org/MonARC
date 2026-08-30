@@ -1,6 +1,6 @@
 # Annotated Bibliography and Foundational Literature
 
-Date: 2026-08-29  
+Date: 2026-08-30  
 Status: Reference Literature Index  
 Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)  
 
@@ -117,11 +117,11 @@ Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)
 
 20. **USGS National Agriculture Imagery Program (NAIP)**
     - *Access*: [USGS EROS NAIP Portal](https://www.usgs.gov/centers/eros/science/usgs-eros-archive-aerial-photography-national-agriculture-imagery-program-naip) / AWS `s3://naip-visualization/`
-    - *Summary*: Authoritative orthophotography across CONUS. CONUS coverage is **data availability**. v1 ingest is one corridor from visualization JPEG COGs (one vintage, ~0.6 m); not `naip-source`, not all years.
+    - *Summary*: Authoritative orthophotography across CONUS. CONUS coverage is **data availability**. v1 ingest is **Colorado** from visualization JPEG COGs (one vintage, ~0.6 m); not `naip-source`, not all years, not one county as the product.
 
 21. **USGS 3D Elevation Program (3DEP)**
     - *Access*: [USGS 3DEP Program](https://www.usgs.gov/3d-elevation-program)
-    - *Summary*: Authoritative LiDAR-derived DSM/DEM products. v1 uses the cheapest already-COG product that supplies metric \( z \) in the corridor bbox (prefer 1/9 arc-second ~3 m). CONUS 1 m point clouds are not a v1 source.
+    - *Summary*: Authoritative LiDAR-derived DSM/DEM products. v1 uses the cheapest already-COG product that supplies metric \( z \) in the **Colorado** clip (prefer 1/9 arc-second ~3 m). CONUS 1 m point clouds are not a v1 source.
 
 22. **Overture Maps Foundation**
     - *Access*: [Overture Maps](https://overturemaps.org/)

@@ -1,6 +1,6 @@
 # AGENTS.md: Developer and Agent Operating Invariants
 
-Date: 2026-08-29  
+Date: 2026-08-30  
 Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)  
 Tone & Style: Strict engineering specification. No marketing text. No fabricated metrics.
 
@@ -12,11 +12,12 @@ Every autonomous agent and human contributor operating in this repository must a
 
 1. **Law of Emergent Visual Landmarks (No Human POIs)**:
    - Landmarks are emergent clusters in metric visual feature space (corners, road junctions, roof geometry, terrain textures).
-   - Never inject human semantic points of interest (restaurants, administrative names, Wikipedia articles, county borders). Semantic entities change arbitrarily and do not provide stable metric anchor points.
-   - A county bounding box may be used as an **ingest clip** (v1: Jefferson County CO). It is not a landmark identity.
+   - Never inject human semantic points of interest (restaurants, administrative names, Wikipedia articles, county or state borders as landmarks). Semantic entities change arbitrarily and do not provide stable metric anchor points.
+   - Do not hardcode geology or landcover class taxonomies as the landmark vocabulary.
+   - A state or county bounding box may be used as an **ingest clip**. v1 product clip is the **state of Colorado**. Jefferson County / Front Range may be a first slice inside Colorado. Clips are not landmark identity.
 2. **Law of Metric Constellations (No H3/Geohash Representation)**:
    - The map representation is not a discrete spatial bucket (H3 hexagon, S2 cell, or geohash bin).
-   - The primary **v1 export** is an inverted index of landmark codes mapped to 3D metric coordinates \( (x, y, z) \) and relative bearing vectors to co-visible neighbors. A continuous feature field, if present, is interpolated/on-demand or a small corridor grid — never a dense continental fp16 / Zarr store.
+   - The primary **v1 export** is an inverted index of landmark codes mapped to 3D metric coordinates \( (x, y, z) \) and relative bearing vectors to co-visible neighbors. A continuous feature field, if present, is interpolated/on-demand or a working-set grid — never a dense CONUS fp16 / Zarr store.
    - S2 indexing is permitted **only** as a spatial partitioning shard for runtime query acceleration during continuous tracking *after* the pose posterior has established concentrated mass. S2 must never be used to define landmark identity.
    - Landmarks are emergent extrema in fused feature space, not every DINOv2 token.
 3. **Law of Ingestion Channel Separation (No Frozen DINO on 6 Channels)**:
@@ -36,13 +37,13 @@ Every autonomous agent and human contributor operating in this repository must a
    - Never report imaginary performance gates (e.g., "achieves 99.4% recall across CONUS").
    - Distinguish strictly between development benchmarks on limited public datasets (e.g., University-1652 campus retrieval) and verified 6-DoF GPS-denied flight performance.
    - Every metric stated in documentation or pull requests must trace to an executable test script, dataset split, and recorded evaluation artifact.
-8. **Law of Corridor-First Cost (No CONUS Raster Factory)**:
-   - v1 coverage is one operational corridor. Default: Jefferson County / Colorado Front Range, aligned to Aflora's Jefferson County CO proof. Continental NAIP+3DEP is a data-availability statement, not a v1 ingest requirement. Full-CONUS index and Sentinel-2 / international coverage are expansion, out of v1.
-   - Pull one NAIP vintage from `s3://naip-visualization` (JPEG COG). Do not ingest `naip-source`, all historical years, or a 0.3 m mandate when ~0.6 m tiles exist. Prefer already-COG 3DEP 1/9 arc-second (~3 m) or 1 m **only** for the corridor bbox. Do not ingest CONUS 1 m lidar point clouds.
+8. **Law of One-State Cost (Colorado v1; No CONUS Raster Factory)**:
+   - **v1 / MonARC-1 coverage is the state of Colorado** (state-boundary or state bbox clip). Jefferson County / Front Range may be a first slice or example ingest bbox; it is **not** the v1 product boundary. Continental NAIP+3DEP is a data-availability statement, not a v1 ingest requirement. **v2 is CONUS**, gated on Colorado actually working. Sentinel-2 / international coverage is out of v1.
+   - Pull one NAIP vintage from `s3://naip-visualization` (JPEG COG). Do not ingest `naip-source`, all historical years, or a 0.3 m mandate when ~0.6 m tiles exist. Prefer already-COG 3DEP 1/9 arc-second (~3 m) or 1 m **only** inside Colorado. Do not ingest CONUS 1 m lidar point clouds.
    - Process in AWS `us-west-2` next to the open-data buckets. Range-read COGs. Do not egress-copy NAIP/3DEP to another cloud. Aflora may store source-byte pointers / small prefixes / hashes; MonARC must not duplicate the rasters.
-   - v1 export is FSQ codes + inverted metric index (LMDB/S2 shards) for the corridor. Do not store a dense continental fp16 feature field.
-   - Stage 1 trains fusion stem + FSQ on a sampled diverse tile set, then infers only on the corridor. Frozen DINOv2. No foundation-model pretrain. Stage 2 uses public thin pairs only (University-1652, DenseUAV, SUES-200, OrthoLoC); no custom flight-log campaign. Stage 3 is a CPU frustum gym on a laptop/workstation. Onboard working set is corridor shards on one Jetson-class payload; no global map on the aircraft.
-   - Planning envelope: under $2,000 cloud+data for v1, preferably a few hundred dollars at county scale. These are planning envelopes, not invoices. Binding detail: [`docs/cost.md`](./docs/cost.md).
+   - v1 export is FSQ codes + inverted metric index (LMDB/S2 shards) for Colorado. Do not store a dense CONUS fp16 / Zarr feature field. Do not hardcode geology or landcover classes.
+   - Stage 1 trains fusion stem + FSQ on a sampled diverse tile set, then infers on Colorado. Frozen DINOv2. No foundation-model pretrain. Stage 2 uses public thin pairs only (University-1652, DenseUAV, SUES-200, OrthoLoC); no custom flight-log campaign. Stage 3 is a CPU frustum gym on a laptop/workstation. Onboard working set is Colorado mission shards on one Jetson-class payload; no CONUS/global map on the aircraft.
+   - Planning envelope: Colorado-state v1 is far below CONUS. County-scale "few hundred dollars" was a slice line, not the v1 product. Do not invent invoices. Binding detail: [`docs/cost.md`](./docs/cost.md).
 
 ---
 
@@ -59,7 +60,7 @@ MonARC/
 +-- docs/                       # Comprehensive specifications
 |   +-- product.md              # Operational envelope, problem definition, failure modes
 |   +-- architecture.md         # Subsystem contracts, tensor I/O, fusion stem, GLACE
-|   +-- cost.md                 # v1 corridor cost law, budget envelope, forbidden explosions
+|   +-- cost.md                 # v1 Colorado cost law, budget envelope, forbidden explosions
 |   +-- data.md                 # Data tiers, geodata sources, licensing, Aflora pipeline
 |   +-- training.md             # 3-stage training pipeline, loss formulas, freeze schedule
 |   +-- evaluation.md           # Evaluation protocols, holdout splits, baseline standards
@@ -76,7 +77,7 @@ MonARC/
 |   |   +-- dino_backbone.py    # Frozen DINOv2 / vision feature extractor
 |   |   +-- fusion_stem.py      # Trainable raster fusion stem for DSM + vector masks
 |   |   +-- quantizer.py        # Finite Scalar Quantization (FSQ) and residual VQ
-|   |   +-- continuous_field.py # On-demand / corridor interpolated field (not CONUS store)
+|   |   +-- continuous_field.py # On-demand / working-set interpolated field (not CONUS store)
 |   |   +-- metric_index.py     # Inverted index (code -> xyz + metric constellations)
 |   |   +-- s2_shard.py         # S2-based spatial sharding for tracking-mode acceleration
 |   +-- perspective/            # Subsystem 2: Perspective encoder & cross-view alignment
@@ -136,4 +137,4 @@ Architectural changes must preserve the four-part isolation contract:
 1. **RFC in `docs/architecture.md`**: Before making code modifications that alter inter-subsystem data formats, update the corresponding tensor signature in [`docs/architecture.md`](./docs/architecture.md).
 2. **Never Merge Subsystems**: Do not merge the Perspective Encoder and Where-Am-I head into an end-to-end regression network. Do not feed pixels to the Hunter policy.
 3. **Verify Tensor Contracts**: Ensure updated modules pass all interface shape and type validation tests under `tests/`.
-4. **Do Not Widen v1 Ingest**: Geographic coverage, raster products, storage artifacts, and training-set scale must remain inside [`docs/cost.md`](./docs/cost.md). Full-CONUS ingest, dense continental fields, and renderer/flight-log campaigns are expansion, not a silent default.
+4. **Do Not Widen v1 Ingest**: Geographic coverage, raster products, storage artifacts, and training-set scale must remain inside [`docs/cost.md`](./docs/cost.md). v1 is Colorado-the-state, not one county and not CONUS. CONUS ingest, dense continental fields, and renderer/flight-log campaigns are v2+ expansion, gated on Colorado working.

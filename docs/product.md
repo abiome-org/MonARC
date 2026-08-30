@@ -1,6 +1,6 @@
 # Product Specification: GPS-Denied Visual Localization for UAVs
 
-Date: 2026-08-29  
+Date: 2026-08-30  
 Status: Active Specification  
 Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)  
 
@@ -10,7 +10,7 @@ Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)
 
 MonARC is engineered specifically for autonomous unmanned aerial systems (UAS / UAVs) operating in communication-denied, GPS-denied environments.
 
-v1 geographic scope is **one operational corridor** (default: Jefferson County / Colorado Front Range), not CONUS. Cost law: [`docs/cost.md`](./cost.md).
+**v1 / MonARC-1 geographic scope is the state of Colorado** (state-boundary or bbox clip), not one county and not CONUS. Jefferson County / Front Range may be a first slice. CONUS is v2, gated on Colorado working. Cost law: [`docs/cost.md`](./cost.md).
 
 ```
                     ALTITUDE REGIMES & OPERATING ENVELOPE
@@ -52,9 +52,9 @@ MonARC addresses two fundamental localization regimes under zero communication:
 ```
 +-----------------------------------------------------------------------------+
 | 1. COLD-START / "LOST-IN-SPACE" LOCALIZATION                                |
-| Initial Prior: p(T_0) = Uniform(SO(3) x R^3) across designated *corridor* (not CONUS) |
+| Initial Prior: p(T_0) = Uniform(SO(3) x R^3) across designated *Colorado mission* (not CONUS) |
 | Input: Single camera frame I_t + Geo-indexed landmark field M               |
-| Process: Coarse Corridor Retrieval (MegaLoc/n-gram) -> Constellation Match   |
+| Process: Coarse Colorado Retrieval (MegaLoc/n-gram) -> Constellation Match  |
 | Output: Multimodal Pose Posterior p(T_t | I_t, M) with concentrated modes   |
 +-----------------------------------------------------------------------------+
                                        |
@@ -70,8 +70,8 @@ MonARC addresses two fundamental localization regimes under zero communication:
 
 ### 2.1 Lost-in-Space (Cold-Start Relocalization)
 When the vehicle is initialized without prior state estimates (e.g., dropped from a mothercraft, booted mid-flight, or recovering from total sensor outage):
-- The initial pose distribution \( p(T_0) \) is uniform across the designated **mission corridor**. v1: Jefferson County / Colorado Front Range. It is **not** uniform over CONUS.
-- The system must retrieve candidate spatial tiles using visual descriptors (MegaLoc-class or code n-gram hashes) over the **corridor index** and resolve ambiguous matches using local metric constellations.
+- The initial pose distribution \( p(T_0) \) is uniform across the designated **mission area inside Colorado**. It is **not** uniform over CONUS. It is not limited to Jefferson County unless that county is the declared mission bbox.
+- The system must retrieve candidate spatial tiles using visual descriptors (MegaLoc-class or code n-gram hashes) over the **Colorado index** and resolve ambiguous matches using local metric constellations.
 - The output is an explicit SE(3) pose posterior:
   \[
   p(T_t \mid I_t, \mathcal{M}) = \sum_{k=1}^K w_k \, \mathcal{N}_{\mathrm{SE(3)}}(\mu_k, \Sigma_k)
@@ -80,7 +80,7 @@ When the vehicle is initialized without prior state estimates (e.g., dropped fro
 
 ### 2.2 Continuous 6-DoF Tracking
 Once the pose posterior mass concentrates around a unimodal cluster:
-- The system queries a spatially constrained S2 map shard corresponding to the local bounding volume **inside the loaded corridor shards**.
+- The system queries a spatially constrained S2 map shard corresponding to the local bounding volume **inside the loaded Colorado shards**.
 - High-frequency IMU integration propagates particles forward in time; the visual Where-Am-I head computes particle weight updates and Lie algebra \( \mathfrak{se}(3) \) innovation deltas.
 - Metric scale is strictly anchored by the Digital Surface Model (DSM) stored in the landmark field, eliminating monocular scale drift.
 
@@ -95,7 +95,7 @@ In GPS-denied autonomous aviation, subjective perceptual quality and LLM-as-judg
 3. **Attitude and Heading Alignment**: Metric heading (yaw) and orientation estimation aligned to true geodetic North.
 4. **Cold-Start Convergence**: Rapid reduction of pose posterior entropy from an uninformative uniform prior to a concentrated unimodal state.
 5. **Zero-Drift Long-Distance Endurance**: Bounded localization error maintained across long flight paths through periodic map-conditioned landmark resets, preventing open-loop dead-reckoning divergence.
-6. **Zero-Shot Generalization on New Flight Paths**: The system must localize over flight paths that were never previously flown, relying strictly on pre-ingested public geodata without requiring prior aerial reconnaissance or map retraining. v1 evaluates this inside the designated corridor and on public UAV benches, not as a CONUS flight claim.
+6. **Zero-Shot Generalization on New Flight Paths**: The system must localize over flight paths that were never previously flown, relying strictly on pre-ingested public geodata without requiring prior aerial reconnaissance or map retraining. v1 evaluates this inside Colorado and on public UAV benches, not as a CONUS flight claim.
 
 All quantitative evaluation protocols, reporting bins, and diagnostic benchmarks are defined in [`docs/evaluation.md`](./evaluation.md).
 
