@@ -40,10 +40,11 @@ Every autonomous agent and human contributor operating in this repository must a
 8. **Law of One-State Cost (Colorado v1; No CONUS Raster Factory)**:
    - **v1 / MonARC-1 coverage is the state of Colorado** (state-boundary or state bbox clip). Jefferson County / Front Range may be a first slice or example ingest bbox; it is **not** the v1 product boundary. Continental NAIP+3DEP is a data-availability statement, not a v1 ingest requirement. **v2 is CONUS**, gated on Colorado actually working. Sentinel-2 / international coverage is out of v1.
    - Pull one NAIP vintage from `s3://naip-visualization` (JPEG COG). Do not ingest `naip-source`, all historical years, or a 0.3 m mandate when ~0.6 m tiles exist. Prefer already-COG 3DEP 1/9 arc-second (~3 m) or 1 m **only** inside Colorado. Do not ingest CONUS 1 m lidar point clouds.
-   - Process in AWS `us-west-2` next to the open-data buckets. Range-read COGs. Do not egress-copy NAIP/3DEP to another cloud. Aflora may store source-byte pointers / small prefixes / hashes; MonARC must not duplicate the rasters.
+   - Process in AWS `us-west-2` next to the open-data buckets. Range-read COGs. Do not egress-copy NAIP/3DEP rasters. Codes+index may land on R2. Aflora may store source-byte pointers / small prefixes / hashes; MonARC must not duplicate the rasters.
    - v1 export is FSQ codes + inverted metric index (LMDB/S2 shards) for Colorado. Do not store a dense CONUS fp16 / Zarr feature field. Do not hardcode geology or landcover classes.
    - Stage 1 trains fusion stem + FSQ on a sampled diverse tile set, then infers on Colorado. Frozen DINOv2. No foundation-model pretrain. Stage 2 uses public thin pairs only (University-1652, DenseUAV, SUES-200, OrthoLoC); no custom flight-log campaign. Stage 3 is a CPU frustum gym on a laptop/workstation. Onboard working set is Colorado mission shards on one Jetson-class payload; no CONUS/global map on the aircraft.
-   - Planning envelope: Colorado-state v1 is far below CONUS. County-scale "few hundred dollars" was a slice line, not the v1 product. Do not invent invoices. Binding detail: [`docs/cost.md`](./docs/cost.md).
+   - Cheap 2026 stack (listed prices as of late Aug 2026, not a measured bill): data plane AWS us-west-2 spot `g4dn.xlarge` / `g6.xlarge` with a VPC S3 gateway (no NAT); train plane Runpod/Vast/Salad RTX 4090, not A100/H100/`p4d`/`p5`; product store Cloudflare R2 (codes+index, target free tier). See [`docs/cost.md`](./docs/cost.md) §6 Compute Vendors.
+   - Planning envelope: about $40–$150 first pass if hours stay in the T4/L4 + couple-of-4090-days band. Hours are the swing. County-scale "few hundred dollars" was a slice line, not the v1 product. Do not invent invoices. Binding detail: [`docs/cost.md`](./docs/cost.md).
 
 ---
 
