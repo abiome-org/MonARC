@@ -194,3 +194,79 @@ GOLDEN_MORRISON_AOI = box_from_center(
     name="golden-morrison-rehearsal",
     role="rehearsal_slice",
 )
+
+
+USGS_75_MIN_DEG = 0.125
+USGS_QQ_MIN_DEG = 0.0625
+_QQ_CORNER_OFFSETS = {
+    "nw": (0, 0),
+    "ne": (0, 1),
+    "sw": (1, 0),
+    "se": (1, 1),
+}
+
+
+def usgs_degree_cell(lat_deg: float, lon_deg: float) -> tuple[int, int]:
+    """Return (north_deg, west_abs_deg) for the 1-degree cell containing a WGS84 point."""
+    lat = float(lat_deg)
+    lon = float(lon_deg)
+    return int(np.floor(lat)), int(np.floor(abs(lon)))
+
+
+def usgs_75_quad(lat_deg: float, lon_deg: float) -> tuple[int, int, int]:
+    """USGS 7.5-minute quadrangle (north_deg, west_abs_deg, qq in 1..64) for a point.
+
+    Numbering is 8 columns west-to-east and 8 rows north-to-south inside the
+    1-degree cell whose northwest corner is (north_deg+1, -(west_abs_deg+1)).
+    """
+    north, west = usgs_degree_cell(lat_deg, lon_deg)
+    row = int(np.floor(((north + 1) - float(lat_deg)) / USGS_75_MIN_DEG))
+    col = int(np.floor(((west + 1) - abs(float(lon_deg))) / USGS_75_MIN_DEG))
+    row = min(7, max(0, row))
+    col = min(7, max(0, col))
+    return north, west, row * 8 + col + 1
+
+
+def usgs_75_bbox(north_deg: int, west_abs_deg: int, qq: int) -> tuple[float, float, float, float]:
+    """WGS84 bbox (west, south, east, north) of a 7.5-minute quadrangle."""
+    qq_i = int(qq)
+    if qq_i < 1 or qq_i > 64:
+        raise ValueError(f"qq must be in 1..64, got {qq_i}")
+    row, col = divmod(qq_i - 1, 8)
+    north = (north_deg + 1) - row * USGS_75_MIN_DEG
+    south = north - USGS_75_MIN_DEG
+    west = -(west_abs_deg + 1) + col * USGS_75_MIN_DEG
+    east = west + USGS_75_MIN_DEG
+    return float(west), float(south), float(east), float(north)
+
+
+def usgs_quarter_bbox(
+    north_deg: int,
+    west_abs_deg: int,
+    qq: int,
+    corner: str,
+) -> tuple[float, float, float, float]:
+    """WGS84 bbox of a NAIP quarter-quad (nw/ne/sw/se) inside a 7.5-minute quadrangle."""
+    key = str(corner).lower()
+    if key not in _QQ_CORNER_OFFSETS:
+        raise ValueError(f"corner must be nw/ne/sw/se, got {corner!r}")
+    west, south, east, north = usgs_75_bbox(north_deg, west_abs_deg, qq)
+    r, c = _QQ_CORNER_OFFSETS[key]
+    q_north = north - r * USGS_QQ_MIN_DEG
+    q_south = q_north - USGS_QQ_MIN_DEG
+    q_west = west + c * USGS_QQ_MIN_DEG
+    q_east = q_west + USGS_QQ_MIN_DEG
+    return q_west, q_south, q_east, q_north
+
+
+def usgs_75_quads_for_bbox(bbox: Sequence[float], samples: int = 5) -> list[tuple[int, int, int]]:
+    """Distinct 7.5-minute quadrangles that a WGS84 bbox may intersect."""
+    west, south, east, north = [float(x) for x in bbox]
+    found: set[tuple[int, int, int]] = set()
+    n = max(2, int(samples))
+    for i in range(n):
+        lat = south + (north - south) * i / (n - 1)
+        for j in range(n):
+            lon = west + (east - west) * j / (n - 1)
+            found.add(usgs_75_quad(lat, lon))
+    return sorted(found)

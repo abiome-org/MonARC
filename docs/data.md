@@ -26,7 +26,7 @@ MonARC enforces a three-tier data hierarchy. Conflating these tiers or using hig
 |  Role: Offline Codebook Construction & Colorado Index                                               |
 |  v1 Volume: State of Colorado. Not one county. Not terabytes-to-petabytes of CONUS.              |
 |  v1 Sources (range-read in us-west-2; do not duplicate rasters):                                 |
-|    - NAIP visualization COGs, one vintage, native ~0.6 m GSD (s3://naip-visualization)           |
+|    - NAIP COGs, one vintage (rehearsal: Planetary Computer STAC `naip` + SAS; AWS naip-visualization is explicit) |
 |    - USGS 3DEP already-COG DSM/DEM for the Colorado clip (prefer 1/9 arc-second ~3 m)           |
 |    - Overture Maps / OSM vector geometry clipped to Colorado                                     |
 |    - Optional first slice: Jefferson County / Front Range (not the product boundary)              |
@@ -67,7 +67,8 @@ v1 **reads** these products for the **Colorado clip** in `us-west-2`. Aflora may
 
 ### 2.1 National Agriculture Imagery Program (NAIP)
 - **Provider**: USDA Farm Service Agency / USGS EROS.
-- **v1 Access**: AWS Open Data `s3://naip-visualization/` (JPEG Cloud-Optimized GeoTIFF). Range-read from `us-west-2`.
+- **v1 Access (rehearsal)**: Microsoft Planetary Computer STAC collection `naip` with anonymous SAS. Range-read COG chips. No AWS billed account.
+- **v1 Access (optional AWS)**: AWS Open Data `s3://naip-visualization/` (JPEG Cloud-Optimized GeoTIFF) only via explicit `--source naip-visualization`.
 - **Forbidden for v1**: `naip-source` uncompressed GeoTIFFs; all historical years; the 16 PB-class raw program archive; a 0.3 m GSD mandate when 0.6 m visualization tiles exist.
 - **v1 Resolution**: Native visualization GSD (~0.6 m). Do not resample Colorado to 0.3 m as a requirement.
 - **Spectral Bands**: RGB from the visualization COGs. NIR is not required for v1.
@@ -77,7 +78,7 @@ v1 **reads** these products for the **Colorado clip** in `us-west-2`. Aflora may
 
 ### 2.2 USGS 3D Elevation Program (3DEP)
 - **Provider**: United States Geological Survey.
-- **Access Portal**: [USGS 3D Elevation Program (3DEP)](https://www.usgs.gov/3d-elevation-program) / AWS Open Data `s3://prd-tnm/StagedProducts/Elevation/`.
+- **Access Portal**: [USGS 3D Elevation Program (3DEP)](https://www.usgs.gov/3d-elevation-program) / TNMAccess public HTTPS / Planetary Computer `3dep-seamless`. Do not require requester-pays `s3://prd-tnm` if it demands an AWS account.
 - **v1 Products**: The cheapest already-COG product that still supplies metric \( z \) inside the Colorado clip. Prefer 1/9 arc-second (~3 m) DSM/DEM. 1 m rasters are allowed only inside Colorado, and only if ~3 m is insufficient for constellation geometry.
 - **Forbidden for v1**: CONUS 1 m lidar point clouds; continental 1 m DSM mosaics.
 - **Role in MonARC**: Provides true metric vertical coordinates \( z \) for the inverted index. MonARC prohibits synthetic height extraction via mono-depth foundation models on orthophotos when authoritative 3DEP exists in Colorado.
@@ -192,9 +193,11 @@ v2 adds further states with the same pipeline **after Colorado works**. It does 
 
 ## 7. Golden–Morrison rehearsal ingest (this increment)
 
-`monarc ingest-aoi` intersects the 10×10 km Golden–Morrison box (center 39.725°N, 105.220°W) with:
+`monarc ingest-aoi` intersects the 10×10 km Golden–Morrison box (center 39.725°N, 105.220°W) with catalogs at launch time. **Default source does not need AWS credentials.**
 
-- NAIP **visualization** via STAC search (`https://planetarycomputer.microsoft.com/api/stac/v1/search`, collection `naip`), rewriting item hrefs to `s3://naip-visualization/{state}/{year}/{gsd}cm/rgb/{quad}/{file}`. Tile IDs come from the catalog, not from a hardcoded list.
-- USGS 3DEP inventory via TNMAccess (`https://tnmaccess.nationalmap.gov/api/v1/products`, dataset `Digital Elevation Model (DEM) 1 meter`).
+- **Primary (default `--source planetary-computer`)**: NAIP via Microsoft Planetary Computer STAC (`https://planetarycomputer.microsoft.com/api/stac/v1/search`, collection `naip`). Asset HREFs are Azure blobs under `naipeuwest.blob.core.windows.net`. Anonymous SAS is issued at `https://planetarycomputer.microsoft.com/api/sas/v1/token/naip` (equivalent to `planetary_computer.sign`). The manifest stores the unsigned catalog HREF, a current signed HREF, expiry, and the token/sign URLs so a Runpod 4090 can refresh and range-read COG **chips**. One NAIP vintage (latest year in the search). Tile IDs come from the catalog, not from a hardcoded list.
+- **Fallback (`--source colorado-public-imagery`)**: unsigned `s3://colorado-public-imagery` listed over HTTPS (`https://colorado-public-imagery.s3.amazonaws.com/?list-type=2&prefix=…`, same as `aws s3 ls --no-sign-request`). Prefer `NAIP/NAIP{year}/cogs/` GeoTIFF keys. County MrSID mosaics are not the chip path.
+- **Explicit AWS (`--source naip-visualization`)**: rewrite STAC items to `s3://naip-visualization/{state}/{year}/{gsd}cm/rgb/{quad}/{file}`. Requester-pays; a billed AWS account may be required. This flag is **not** the first-slice default and does not read AWS shared credentials from disk.
+- **DSM**: USGS TNMAccess (`https://tnmaccess.nationalmap.gov/api/v1/products`, dataset `Digital Elevation Model (DEM) 1 meter`) using public HTTPS `downloadURL` values. Rewrite `s3://prd-tnm` to `https://prd-tnm.s3.amazonaws.com/…` when that object is anonymously readable; reject requester-pays S3 if an account is demanded. Planetary Computer collection `3dep-seamless` is an additional account-free DSM catalog (signed the same way as NAIP).
 
-The helper writes a JSON manifest. It does not download rasters, does not walk the full state, and does not persist `naip-source` objects. CPU tests use `tests/fixtures/inventory/` (`--offline`). v1 product coverage remains Colorado-the-state; CONUS is v2 ([`cost.md`](./cost.md)). The Golden–Morrison box is a $150 rehearsal slice, not a rewrite of coverage.
+The helper writes a JSON manifest plus a chip-window plan (`chip_extract.windows`). `--chips DIR` range-reads those windows into PNG + xyz sidecars for `monarc extract` (optional rasterio via `monarc[ingest]`). It does not copy full GeoTIFFs, does not write rasters to R2, does not walk the full state, and does not persist `naip-source` objects. CPU tests use `tests/fixtures/inventory/` (`--offline`) and never open the network. v1 product coverage remains Colorado-the-state; CONUS is v2 ([`cost.md`](./cost.md)). The Golden–Morrison box is a $150 rehearsal slice, not a rewrite of coverage.

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Name>colorado-public-imagery</Name>
+  <Prefix>NAIP/NAIP2021/cogs/</Prefix>
+  <KeyCount>3</KeyCount>
+  <MaxKeys>1000</MaxKeys>
+  <IsTruncated>false</IsTruncated>
+  <Contents>
+    <Key>NAIP/NAIP2021/cogs/m_3910523_nw_13_060_20210825.tif</Key>
+    <Size>1000</Size>
+  </Contents>
+  <Contents>
+    <Key>NAIP/NAIP2021/cogs/m_3910523_sw_13_060_20210825.tif</Key>
+    <Size>1000</Size>
+  </Contents>
+  <Contents>
+    <Key>NAIP/NAIP2021/cogs/m_3610201_ne_13_060_20210708.tif</Key>
+    <Size>1000</Size>
+  </Contents>
+</ListBucketResult>

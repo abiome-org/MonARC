@@ -1,0 +1,16 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "n40w106-13",
+      "bbox": [-106.0, 39.0, -105.0, 40.0],
+      "properties": {"gsd": 10},
+      "assets": {
+        "data": {
+          "href": "https://ai4edataeuwest.blob.core.windows.net/3dep/Elevation/13/TIFF/n40w106/USGS_13_n40w106.tif"
+        }
+      }
+    }
+  ]
+}
