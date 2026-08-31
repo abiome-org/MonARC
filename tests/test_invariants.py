@@ -33,6 +33,14 @@ def test_ingest_does_not_use_boto3_or_dot_aws():
     assert "naip-visualization" in text
 
 
+def test_eval_retrieve_is_offline_numpy():
+    text = (MONARC / "localization" / "eval_retrieve.py").read_text()
+    assert "import torch" not in text
+    assert "urllib" not in text
+    assert "boto3" not in text
+    assert "888" not in text
+
+
 def test_no_vqvae_embedding_codebook():
     text = (MONARC / "map" / "quantizer.py").read_text()
     assert "nn.Embedding" not in text

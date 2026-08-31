@@ -1,4 +1,4 @@
-"""Command-line entry: dry-run, extract, train-fsq, AOI ingest, UAV benches."""
+"""Command-line entry: dry-run, extract, train-fsq, eval-retrieve, AOI ingest, UAV benches."""
 
 from __future__ import annotations
 
@@ -94,6 +94,21 @@ def _cmd_ingest_aoi(args: argparse.Namespace) -> int:
         materialize_only=args.materialize_only,
     )
     sys.stdout.write(str(path) + "\n")
+    return 0
+
+
+def _cmd_eval_retrieve(args: argparse.Namespace) -> int:
+    from monarc.localization.eval_retrieve import evaluate_retrieve_dirs
+
+    report = evaluate_retrieve_dirs(
+        args.extract,
+        args.fsq,
+        query_fraction=args.query_fraction,
+        axis=args.axis,
+        out=args.out,
+    )
+    json.dump(report, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
     return 0
 
 
@@ -242,6 +257,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Range-read chip windows from an existing --out manifest (no catalog query)",
     )
     aoi.set_defaults(func=_cmd_ingest_aoi)
+
+    ev = sub.add_parser(
+        "eval-retrieve",
+        help=(
+            "Colorado retrieval track: bag-of-codes Recall@1/5 and xyz error "
+            "on a spatial holdout of extract+fsq chips. CPU, no network."
+        ),
+    )
+    ev.add_argument("--extract", type=Path, required=True, help="Directory with features.npy (and xyz.npy)")
+    ev.add_argument("--fsq", type=Path, required=True, help="Directory with codes.npy and xyz.npy")
+    ev.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Optional JSON report path. Always printed to stdout.",
+    )
+    ev.add_argument(
+        "--query-fraction",
+        type=float,
+        default=0.25,
+        help="Fraction of unique positions on the split axis held out as queries",
+    )
+    ev.add_argument(
+        "--axis",
+        default="auto",
+        choices=["auto", "east", "north"],
+        help="Spatial box axis. auto: longer east/north span. High side is queries.",
+    )
+    ev.set_defaults(func=_cmd_eval_retrieve)
 
     bench = sub.add_parser("bench-uav", help="List or parse a public UAV bench (University-1652)")
     bench.add_argument("--dataset", default="university1652")
