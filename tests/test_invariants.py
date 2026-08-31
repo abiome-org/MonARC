@@ -25,6 +25,14 @@ def test_no_hunter_policy_module():
     assert not (MONARC / "hunter").exists()
 
 
+def test_ingest_does_not_use_boto3_or_dot_aws():
+    text = (MONARC / "data" / "aflora_ingest.py").read_text()
+    assert "boto3" not in text
+    assert ".aws" not in text
+    assert "AWS_ACCESS_KEY" not in text
+    assert "naip-visualization" in text
+
+
 def test_no_vqvae_embedding_codebook():
     text = (MONARC / "map" / "quantizer.py").read_text()
     assert "nn.Embedding" not in text

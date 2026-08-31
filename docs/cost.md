@@ -70,16 +70,17 @@ Lost-in-space retrieval in v1 is uniform over the designated mission area **insi
 
 ### 4.1 NAIP
 
-- Pull RGB from `s3://naip-visualization` (JPEG Cloud-Optimized GeoTIFF).
-- **One vintage** covering Colorado. Do not ingest all historical years.
+- **Rehearsal / first slice**: Microsoft Planetary Computer STAC collection `naip` with anonymous SAS. No AWS billed account. Optional unsigned `s3://colorado-public-imagery` HTTPS list. `s3://naip-visualization` only behind an explicit ingest flag.
+- **One vintage** covering the clip (and later Colorado). Do not ingest all historical years.
 - Do not pull `naip-source` uncompressed GeoTIFFs.
-- Do not require 0.3 m GSD when 0.6 m visualization tiles exist. Native visualization GSD (~0.6 m) is the v1 default.
+- Do not require 0.3 m GSD when 0.6 m visualization tiles exist. Native visualization GSD (~0.6 m) is the v1 default; PC 0.3 m items may be range-read as chips without a 0.3 m statewide mandate.
 - Do not target the 16 PB-class raw NAIP program archive.
 
 ### 4.2 3DEP
 
 - Use the **cheapest product that still supplies metric \( z \)** inside the Colorado clip.
-- Prefer already-COG 1/9 arc-second (~3 m) DSM/DEM.
+- Prefer already-COG 1/9 arc-second (~3 m) DSM/DEM, or TNM public HTTPS 1 m inside Colorado, or Planetary Computer `3dep-seamless`.
+- Do not use requester-pays `s3://prd-tnm` if that path demands an AWS account; prefer anonymous HTTPS `downloadURL` or PC SAS.
 - 1 m products are allowed **only** inside Colorado, and only if 1/9 arc-second is insufficient for metric constellation geometry in that box.
 - Do not ingest CONUS 1 m lidar point clouds.
 
@@ -92,12 +93,12 @@ Lost-in-space retrieval in v1 is uniform over the designated mission area **insi
 
 ## 5. Compute and Locality Rule
 
-- **Data plane** (GDAL warp, frozen DINOv2 inference, fusion+FSQ **inference** on Colorado): **AWS `us-west-2` only**, next to `s3://naip-visualization`, 3DEP staged products, and `s3://overturemaps-us-west-2`.
-- **Range-read** COGs. Do not copy rasters to another cloud or region. Do not pull the Colorado NAIP vintage off AWS to a neocloud.
+- **Data plane** (GDAL warp, frozen DINOv2 inference, fusion+FSQ **inference** on Colorado): a later statewide walk may sit in AWS `us-west-2` next to `s3://naip-visualization`. **The Golden–Morrison rehearsal does not.** It range-reads Planetary Computer (or unsigned Colorado public imagery) COG chips onto the train plane; AWS billed accounts are out for that slice.
+- **Range-read** COG chips. Do not copy full GeoTIFFs to another cloud or to R2. Do not pull a statewide NAIP vintage off AWS to a neocloud.
 - Aflora may store **source-byte pointers, small prefixes, and hashes** (warehouse). MonARC must **not duplicate** NAIP/3DEP rasters.
-- **Train plane** (Stage 1 sampled tiles + Stage 2 public benches) may run on a cheap 4090 vendor. It does not receive a copy of the Colorado NAIP vintage.
+- **Train plane** (Stage 1 sampled tiles + Stage 2 public benches) may run on a cheap 4090 vendor. Rehearsal chips are windows, not a vintage copy.
 - **Product store** (FSQ codes + inverted index) may live on Cloudflare R2. Rasters must not.
-- Vendor SKUs, listed rates, and the NAT/gateway lock: **§6 Compute Vendors**.
+- Vendor SKUs, listed rates, and the NAT/gateway lock: **§6 Compute Vendors**. Rehearsal skips the AWS data-plane SKU.
 
 ---
 
@@ -229,13 +230,18 @@ When expanding:
 
 ## 12. Golden–Morrison rehearsal (this executable increment)
 
-The 10×10 km Golden–Morrison box (center approximately 39.725°N, 105.220°W; 100 km²) is a **rehearsal / first slice** for CPU dry-run ingest: STAC ∩ TNMAccess manifest, tiny FSQ, code→xyz index. It sits inside Colorado (Front Range). It does **not** rewrite v1 coverage. Jefferson County remains a slice, not the product. CONUS remains v2.
+The 10×10 km Golden–Morrison box (center approximately 39.725°N, 105.220°W; 100 km²) is a **rehearsal / first slice** for CPU ingest dry-run: STAC ∩ TNMAccess manifest, range-read COG chips, tiny FSQ, code→xyz index. It sits inside Colorado (Front Range). It does **not** rewrite v1 coverage. Jefferson County remains a slice, not the product. CONUS remains v2.
+
+**AWS billed accounts are out for this rehearsal.** The default ingest source is Microsoft Planetary Computer STAC (`https://planetarycomputer.microsoft.com/api/stac/v1`, collection `naip`) with anonymous SAS (`https://planetarycomputer.microsoft.com/api/sas/v1/token/naip`). No AWS shared-credentials file is read. Cloudflare R2 remains the product store for FSQ codes + inverted index only; do not copy GeoTIFFs or other rasters to R2.
 
 This increment:
 
-- Writes an AOI **manifest** of intersecting NAIP visualization COGs and 3DEP inventory records. Tile IDs come from catalogs at launch time, not a hardcoded list.
-- Persists FSQ codes, metric xyz, and compact metadata. Does not download or store rasters. Does not persist `naip-source`. Does not walk the full state.
-- Adds no Terraform. NAT Gateway, SageMaker, and EKS remain forbidden (§6.5). The cheap 2026 vendor lock in §6 is unchanged.
+- Writes an AOI **manifest** of intersecting NAIP COG HREFs (signed or refreshable SAS) and public 3DEP inventory records. Tile IDs come from catalogs at launch time, not a hardcoded list. Range-read **chips only**; do not copy full GeoTIFFs.
+- Default CLI: `monarc ingest-aoi --source planetary-computer` (this is the default). Optional fallback: unsigned `s3://colorado-public-imagery` via `--no-sign-request` / HTTPS list (`--source colorado-public-imagery`). The AWS `s3://naip-visualization` rewrite is an **explicit** `--source naip-visualization` flag only; it is not required for the first slice.
+- DSM from USGS TNMAccess public HTTPS GeoTIFF URLs (anonymous GET). Do not use requester-pays `s3://prd-tnm` if that path demands an account. Planetary Computer `3dep-seamless` is an additional account-free DSM catalog.
+- Chip windows in the manifest feed `monarc extract` on a Runpod 4090. Optional `pip install 'monarc[ingest]'` (rasterio) range-reads remote COGs; CPU pytest stays on offline fixtures and does not download rasters.
+- Persists FSQ codes, metric xyz, and compact metadata. Does not persist `naip-source`. Does not walk the full state.
+- Adds no Terraform. NAT Gateway, SageMaker, and EKS remain forbidden (§6.5). The cheap 2026 vendor lock in §6 still applies to a later statewide AWS data plane; this rehearsal does not require it.
 
 The $150 figure attached to this box is the **slice rehearsal envelope**, inside the v1 first-pass planning band in §2. It is not an invoice and not a performance claim.
 

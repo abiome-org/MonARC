@@ -83,6 +83,12 @@ def _cmd_ingest_aoi(args: argparse.Namespace) -> int:
         center=args.center,
         size_km=args.size_km,
         offline=args.offline,
+        source=args.source,
+        chips_dir=args.chips,
+        chip_size=args.chip_size,
+        chip_grid=args.chip_grid,
+        max_chips=args.max_chips,
+        materialize_only=args.materialize_only,
     )
     sys.stdout.write(str(path) + "\n")
     return 0
@@ -183,7 +189,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     aoi = sub.add_parser(
         "ingest-aoi",
-        help="Intersect Golden-Morrison (or --center) with NAIP visualization STAC and 3DEP inventory",
+        help=(
+            "Golden-Morrison (or --center) NAIP+3DEP manifest. "
+            "Default source is Planetary Computer (anonymous SAS, no ~/.aws)."
+        ),
     )
     aoi.add_argument("--out", type=Path, required=True)
     aoi.add_argument(
@@ -193,10 +202,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     aoi.add_argument("--size-km", type=float, default=10.0)
     aoi.add_argument(
+        "--source",
+        default="planetary-computer",
+        choices=["planetary-computer", "colorado-public-imagery", "naip-visualization"],
+        help=(
+            "planetary-computer: anonymous STAC+SAS (default). "
+            "colorado-public-imagery: unsigned HTTPS list fallback. "
+            "naip-visualization: explicit AWS requester-pays path; does not read ~/.aws."
+        ),
+    )
+    aoi.add_argument(
         "--offline",
         type=Path,
         default=None,
         help="Directory with naip_stac.json and tnm_products.json; skips live HTTP",
+    )
+    aoi.add_argument(
+        "--chips",
+        type=Path,
+        default=None,
+        help="Write range-read PNG chips + xyz sidecars for monarc extract (Runpod 4090)",
+    )
+    aoi.add_argument("--chip-size", type=int, default=224)
+    aoi.add_argument("--chip-grid", type=int, default=8, help="Sample grid along each AOI axis")
+    aoi.add_argument("--max-chips", type=int, default=64)
+    aoi.add_argument(
+        "--materialize-only",
+        action="store_true",
+        help="Range-read chip windows from an existing --out manifest (no catalog query)",
     )
     aoi.set_defaults(func=_cmd_ingest_aoi)
 

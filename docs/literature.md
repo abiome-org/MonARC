@@ -116,7 +116,7 @@ Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)
     - *Summary*: Cross-view UAV visual localization dataset covering 200 distinct geographic scenes captured at altitudes of 150m, 200m, 250m, and 300m AGL.
 
 20. **USGS National Agriculture Imagery Program (NAIP)**
-    - *Access*: [USGS EROS NAIP Portal](https://www.usgs.gov/centers/eros/science/usgs-eros-archive-aerial-photography-national-agriculture-imagery-program-naip) / AWS `s3://naip-visualization/`
+    - *Access*: [USGS EROS NAIP Portal](https://www.usgs.gov/centers/eros/science/usgs-eros-archive-aerial-photography-national-agriculture-imagery-program-naip) / Microsoft Planetary Computer STAC collection `naip` (anonymous SAS) / AWS `s3://naip-visualization/` (explicit, not the rehearsal default)
     - *Summary*: Authoritative orthophotography across CONUS. CONUS coverage is **data availability**. v1 ingest is **Colorado** from visualization JPEG COGs (one vintage, ~0.6 m); not `naip-source`, not all years, not one county as the product.
 
 21. **USGS 3D Elevation Program (3DEP)**

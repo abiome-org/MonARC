@@ -8,6 +8,8 @@ from monarc.common.coordinates import (
     geodetic_to_ecef,
     geodetic_to_enu,
     geodetic_to_utm,
+    usgs_75_quad,
+    usgs_75_quads_for_bbox,
     utm_zone,
 )
 
@@ -42,6 +44,16 @@ def test_utm_zone_golden():
     assert h == "N"
     assert 400000 < e < 600000
     assert 4_000_000 < n < 5_000_000
+
+
+def test_usgs_75_quad_golden_morrison_center():
+    north, west, qq = usgs_75_quad(39.725, -105.220)
+    assert north == 39
+    assert west == 105
+    assert qq == 23
+    cells = usgs_75_quads_for_bbox(GOLDEN_MORRISON_AOI.bbox)
+    assert (39, 105, 23) in cells
+    assert (36, 102, 1) not in cells
 
 
 def test_ecef_finite():

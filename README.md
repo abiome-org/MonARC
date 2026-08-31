@@ -61,7 +61,7 @@ MonARC enforces a strict four-subsystem decoupled architecture. Under no circums
 
 MonARC forbids grid-based aerial photographic sweeps of the continental United States at 50 ft AGL and bans flight simulator visual scrapers (such as MSFS or Unreal Engine) for policy training.
 
-**v1 is Colorado-the-state, not one county and not CONUS.** Clip ingest to the Colorado state boundary or state bbox. Jefferson County / Front Range may be a first slice. Pull a single NAIP vintage from `s3://naip-visualization` (JPEG COG, ~0.6 m is the default; do not require 0.3 m). Prefer already-COG 3DEP 1/9 arc-second (~3 m) or 1 m only inside Colorado. Process in `us-west-2`; range-read; do not duplicate rasters. Export FSQ codes and an inverted metric index for Colorado — not a dense CONUS fp16 / Zarr field. Stage 1 trains on a sampled tile set, then infers on Colorado. Stage 2 uses public UAV benches only (University-1652, DenseUAV, SUES-200, OrthoLoC); no custom flight-log campaign. Stage 3 is a CPU frustum gym (no Unreal). CONUS ingest is v2, gated on Colorado working. Sentinel-2 / international coverage is out of v1. Detail: [`docs/cost.md`](./docs/cost.md).
+**v1 is Colorado-the-state, not one county and not CONUS.** Clip ingest to the Colorado state boundary or state bbox. Jefferson County / Front Range may be a first slice. The Golden–Morrison rehearsal pulls a single NAIP vintage from Planetary Computer (anonymous SAS; no AWS billed account). `s3://naip-visualization` is an explicit flag, not the first-slice default. Prefer already-COG 3DEP from TNM public HTTPS or PC `3dep-seamless` (1/9 arc-second ~3 m, or 1 m only inside Colorado). Range-read chips; do not duplicate rasters; do not store rasters on R2. Export FSQ codes and an inverted metric index for Colorado — not a dense CONUS fp16 / Zarr field. Stage 1 trains on a sampled tile set, then infers on Colorado. Stage 2 uses public UAV benches only (University-1652, DenseUAV, SUES-200, OrthoLoC); no custom flight-log campaign. Stage 3 is a CPU frustum gym (no Unreal). CONUS ingest is v2, gated on Colorado working. Sentinel-2 / international coverage is out of v1. Detail: [`docs/cost.md`](./docs/cost.md).
 
 The landmark field is constructed exclusively from open federal geodata (NAIP, USGS 3DEP) and open vector geometry (Overture Maps, OpenStreetMap). Real perspective pairs for cross-view alignment are sourced from rigorously geo-referenced public UAV benchmarks. Active vision policies are trained exclusively inside abstract frustum environments against noisy landmark fields.
 
@@ -109,13 +109,23 @@ Observed numbers printed by that command are **that synthetic run only**. They a
 
 ### 5.3 AOI ingest (Golden–Morrison rehearsal)
 
-Intersects the 10×10 km box (center ~39.725°N, 105.220°W) with NAIP visualization STAC and 3DEP TNMAccess at launch time. Writes a manifest. Does not hardcode NAIP quarter-quad IDs. Does not download rasters.
+Intersects the 10×10 km box (center ~39.725°N, 105.220°W) with NAIP and public 3DEP at launch time. **Default source is Planetary Computer (anonymous SAS). No AWS credentials.** Writes a manifest of signed-or-refreshable asset HREFs and a chip-window plan. Does not hardcode NAIP quarter-quad IDs. Range-reads COG chips only; does not copy full GeoTIFFs to disk or R2.
 
 ```
+# Offline pytest path (fixtures; no network):
 python -m monarc.cli ingest-aoi --out artifacts/golden_morrison_manifest.json --offline tests/fixtures/inventory
+
+# Live first slice (no AWS account). Optional: --chips artifacts/chips
+python -m monarc.cli ingest-aoi --out artifacts/golden_morrison_manifest.json --source planetary-computer --chips artifacts/chips
+
+# Documented fallback (unsigned HTTPS list):
+python -m monarc.cli ingest-aoi --out artifacts/golden_morrison_manifest.json --source colorado-public-imagery
+
+# AWS naip-visualization rewrite (explicit; not the rehearsal default):
+python -m monarc.cli ingest-aoi --out artifacts/golden_morrison_manifest.json --source naip-visualization
 ```
 
-Omit `--offline` only when live STAC/TNM HTTP is intended. v1 coverage remains Colorado-the-state; CONUS is v2. This box is a $150 rehearsal slice, not a rewrite of coverage ([`docs/cost.md`](./docs/cost.md) §12).
+`--source planetary-computer` is the default and may be omitted. On a Runpod 4090, refresh SAS from the manifest (`token_url` / `sign_url`), range-read chip windows (`pip install 'monarc[ingest]'` for rasterio), then `monarc extract` + `monarc train-fsq`. Omit `--offline` only when live STAC/SAS/TNM HTTP is intended. v1 coverage remains Colorado-the-state; CONUS is v2. This box is a $150 rehearsal slice, not a rewrite of coverage ([`docs/cost.md`](./docs/cost.md) §12).
 
 ### 5.4 Public-UAV bench (University-1652)
 
@@ -133,7 +143,7 @@ python -m monarc.cli bench-uav --root /data/University-1652 --download --downloa
 
 CPU `pytest` stays on the DINO **stub** (no hub, no Hugging Face). On a Runpod Community RTX 4090 (train plane; listed $0.34/hr as of 2026-08-27, not an invoice), load official frozen DINOv2-B/14 (`torch.hub` `facebookresearch/dinov2` / `dinov2_vitb14`, or Hugging Face `facebook/dinov2-base`).
 
-Do **not** copy NAIP/3DEP rasters onto the 4090 or to R2. Extract writes DINO feature grids + xyz sidecar. `train-fsq` consumes those features, checkpoints often, and writes `codes.npy` + xyz. Product boundary remains Colorado; Golden–Morrison is the first slice, not statewide ingest.
+Do **not** copy full NAIP/3DEP GeoTIFFs onto the 4090 or to R2. Range-read COG **chips** from the ingest manifest (Planetary Computer SAS). Extract writes DINO feature grids + xyz sidecar. `train-fsq` consumes those features, checkpoints often, and writes `codes.npy` + xyz. Product boundary remains Colorado; Golden–Morrison is the first slice, not statewide ingest.
 
 ```
 python -m pip install -e ".[dev]"
