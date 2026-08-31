@@ -91,6 +91,7 @@ MonARC/
 |   +-- localization/           # Subsystem 3: Where-am-I estimation head
 |   |   +-- global_retrieve.py  # Lost-in-space bag-of-codes / frozen-DINO chip retrieve
 |   |   +-- eval_retrieve.py    # Colorado-track bag-of-codes + frozen-DINO retrieve on spatial chip holdout
+|   |   +-- eval_place_score.py # CPU same-place crop/overlap verification on cached DINO+FSQ grids
 |   |   +-- eval_match_pnp.py   # Top-K local DINO-grid matches + PnP/LM with chip-center xy fallback
 |   |   +-- dpnp.py             # Differentiable PnP particle initializer
 |   |   +-- perceiver.py        # Set transformer for correspondence-to-pose cross-attention
@@ -108,6 +109,7 @@ MonARC/
 |   +-- test_fsq.py             # Codebook quantization determinism and collision rates
 |   +-- test_frustum.py         # Camera ray terrain intersection accuracy
 |   +-- test_eval_retrieve.py   # Colorado-track spatial holdout Recall@K and xyz error (bag + DINO)
+|   +-- test_eval_place_score.py # Fixture-only same-place AUROC, Recall@1, inliers, and CLI contract
 |   +-- test_eval_match_pnp.py  # CPU top-K patch matching, NaN-z fallback, and JSON/CLI contract
 |   +-- test_perceiver.py       # Where-am-I permutation invariance over correspondences
 |   +-- test_hunter_env.py      # Frustum gym state transitions and information gain

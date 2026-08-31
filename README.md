@@ -178,14 +178,29 @@ Community Cloud bills wall clock while the pod is up. Checkpoint often (`--ckpt-
 
 Keep these separate. Do not invent or copy numbers between them.
 
-1. **Colorado map evaluation** — chip retrieval (`monarc eval-retrieve`) and local frozen-DINO grid matching plus PnP/LM attempt (`monarc eval-match-pnp`) over ingested NAIP visualization + 3DEP chip xyz inside Colorado (Golden–Morrison rehearsal first; the product remains the state) (§5.7).
+1. **Colorado map evaluation** — same-place verification (`monarc eval-place-score`) is the product-bar grain; spatial chip retrieval (`monarc eval-retrieve`) and local frozen-DINO matching plus PnP/LM (`monarc eval-match-pnp`) remain different-grain diagnostics over Colorado caches (§5.7).
 2. **Public-UAV adapter** — perspective encoder / retrieval on University-1652 (later DenseUAV, SUES-200, OrthoLoC). Script: `monarc bench-uav` (§5.4). Do not copy Colorado-track JSON into this track.
 
 A metric is reportable only when a script, split, and saved artifact exist for that track ([`docs/evaluation.md`](./docs/evaluation.md)).
 
 ### 5.7 Colorado retrieval eval (CPU, no network)
 
-`monarc eval-retrieve` is the Colorado retrieval track on a real extract+FSQ chip cache (`features.npy`, `codes.npy`, `xyz.npy`). It does not download weights or rasters. It does not run Hunter. Query chips are a spatial box (high side of the longer east/north span), not a random sample of neighboring chips. Rank-1 xyz error is the retrieved gallery chip versus the query chip. Recall@K is whether the spatially nearest gallery chip is in the top K. Top-level Recall@K is bag-of-codes. When `features.npy` is present, the same JSON also reports `modes["dino-pooled-cosine"]` (mean-pooled frozen DINO) and `modes["dino-grid-cosine"]` (flattened feature grid). Compare those modes from the run JSON; do not paste rehearsal Recall@K into this file.
+For the “is this that place?” bar, run `monarc eval-place-score` on local
+extract+FSQ caches. It creates aligned crop-jitter queries from cached DINO and
+code grids, reports any distinct chips that genuinely fall within the declared
+chip-size overlap radius, and uses the existing far spatial box only for
+negative scores. JSON includes bag-of-codes, pooled DINO, and sliding-window
+DINO-grid AUROC/Recall@1, conditional top-K xy, and mutual-nearest grid inliers.
+It never reloads PNGs or extracts features.
+
+```
+python -m monarc.cli eval-place-score \
+  --extract artifacts/extract \
+  --fsq artifacts/fsq \
+  --out artifacts/colorado_place_score.json
+```
+
+`monarc eval-retrieve` is retained as a different-grain spatial-holdout diagnostic on a real extract+FSQ chip cache (`features.npy`, `codes.npy`, `xyz.npy`). It does not download weights or rasters. It does not run Hunter. Query chips are a spatial box (high side of the longer east/north span), not a random sample of neighboring chips. Rank-1 xyz error is the retrieved gallery chip versus the query chip. Recall@K is whether the spatially nearest gallery chip is in the top K. Top-level Recall@K is bag-of-codes. When `features.npy` is present, the same JSON also reports `modes["dino-pooled-cosine"]` (mean-pooled frozen DINO) and `modes["dino-grid-cosine"]` (flattened feature grid). Compare those modes from the run JSON; do not paste rehearsal Recall@K into this file.
 
 On the Golden–Morrison 64-chip rehearsal the split is tiny; the JSON sets `split.tiny` and states that in `note`. Those figures are that chip set only — not University-1652 Recall@1 and not Colorado GPS-denied flight ATE. CPU pytest uses a handful of fixture codes/xyz/features; it does not encode a Runpod unique-code count.
 

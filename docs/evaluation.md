@@ -53,6 +53,37 @@ Each query records top-K ids and match counts, local match inlier count, refined
 
 This protocol is a map-cache diagnostic, not University-1652 and not GPS-denied flight ATE. Fixture comparisons are fixture results only; they neither establish nor refute performance on Golden–Morrison or statewide Colorado data. Report actual results only from a saved JSON artifact produced by the command.
 
+### 1.4 Colorado place verification (`monarc eval-place-score`)
+
+`monarc eval-place-score --extract <dir> --fsq <dir> --out <json>` measures the
+same-place decision grain using only cached `features.npy`, `codes.npy`, and
+`xyz.npy`. It is CPU-only and performs no image loading, feature extraction,
+network access, or raster access.
+
+The gallery is the complement of the existing high-side spatial-box holdout.
+Each gallery feature/code grid supplies one aligned crop-jitter query whose true
+identity is that gallery chip. Distinct gallery chips also supply spatial-overlap
+queries when their horizontal center distance is no greater than
+`chip_size_m = extract_size_px * gsd_m`; the JSON reports the observed count,
+including zero. Self is excluded from this distinct-overlap count. The held-out
+spatial box supplies geographically disjoint far queries and is used only for
+negative pair scores.
+
+Bag-of-codes, mean-pooled frozen-DINO cosine, and sliding-window frozen-DINO
+grid cosine each report same-place Recall@1 and AUROC against all far-query /
+gallery pair scores. Recall@1 never includes far queries. Horizontal error is
+reported only for same-place queries whose true gallery chip occurs in top-K.
+Mutual-nearest DINO patch inlier totals and normalized rates use the cosine
+threshold declared in the JSON. The top-level headline mirrors bag-of-codes;
+all descriptor results remain available under `modes`.
+
+This place-verification protocol is the product-bar grain. The retained
+`eval-retrieve` spatial holdout asks whether a geographically separate chip can
+retrieve its nearest gallery neighbor and is a different map diagnostic, not a
+substitute for same-place overlap. Neither protocol is University-1652,
+OrthoLoC, Colorado flight ATE, Hunter, or VLA evaluation. Documentation contains
+no rehearsal result values; report only a saved artifact from a named run.
+
 ---
 
 ## 2. Benchmark Evaluation Protocols
