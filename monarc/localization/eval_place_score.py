@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import torch
+from PIL import Image
 
 from monarc.localization.eval_match_pnp import match_dino_grids
 from monarc.localization.eval_retrieve import load_retrieve_inputs, spatial_holdout_indices
@@ -17,6 +19,9 @@ from monarc.localization.global_retrieve import (
     bag_of_codes,
     pool_chip_features,
 )
+from monarc.map.dino_backbone import load_frozen_dino
+from monarc.map.quantizer import DEFAULT_FSQ_LEVELS
+from monarc.map.stage1 import default_stage1_modules, encode_from_features
 
 INLIER_MIN_COSINE = 0.8
 
@@ -77,6 +82,84 @@ def _crop_bounds(height: int, width: int, margin: int, ordinal: int) -> tuple[sl
     return slice(margin - shift, height - margin - shift), slice(margin - shift, width - margin - shift)
 
 
+def _pixel_crop_bounds(size_px: int, margin_px: int, patch_size: int, ordinal: int) -> tuple[slice, slice]:
+    """Image-space crop with one-patch (not one-pixel) ordinal jitter."""
+    if margin_px < 0 or 2 * margin_px >= size_px:
+        raise ValueError("crop_margin must leave at least one image pixel in each dimension")
+    shift = int(patch_size) if margin_px > 0 and ordinal % 2 else 0
+    if margin_px - shift < 0:
+        raise ValueError("pixel crop shift exceeds margin")
+    return (
+        slice(margin_px - shift, size_px - margin_px - shift),
+        slice(margin_px - shift, size_px - margin_px - shift),
+    )
+
+
+def _reencode_crop_queries(
+    chips_dir: str | Path,
+    ids: list[str],
+    gallery: np.ndarray,
+    fsq_ckpt: str | Path,
+    *,
+    size_px: int,
+    patch_size: int,
+    crop_margin: int,
+    backbone_mode: str,
+    weights_path: str | Path | None,
+    device: str,
+    allow_download: bool,
+    max_crop_queries: int | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Crop pixels, resize, and re-encode query views without touching gallery grids."""
+    if max_crop_queries is not None and max_crop_queries < 0:
+        raise ValueError("max_crop_queries must be non-negative")
+    selected = gallery[:max_crop_queries] if max_crop_queries is not None else gallery
+    margin_px = int(crop_margin) * int(patch_size)
+    rows, cols = _pixel_crop_bounds(size_px, margin_px, patch_size, 0)
+    if rows.stop - rows.start <= 0 or cols.stop - cols.start <= 0:
+        raise ValueError("crop_margin leaves no image pixels")
+
+    backbone = load_frozen_dino(
+        mode=backbone_mode, weights_path=weights_path,
+        allow_download=allow_download, device=device,
+    )
+    backbone.eval()
+    payload = torch.load(fsq_ckpt, map_location="cpu", weights_only=True)
+    _, stem, mix, head = default_stage1_modules(levels=payload.get("levels", DEFAULT_FSQ_LEVELS))
+    for key, module in (("fusion_stem", stem), ("channel_fusion", mix), ("fsq_head", head)):
+        if key in payload:
+            module.load_state_dict(payload[key])
+
+    root = Path(chips_dir)
+    queries: list[dict[str, Any]] = []
+    for ordinal, gi_raw in enumerate(selected.tolist()):
+        gi = int(gi_raw)
+        chip = root / ids[gi]
+        if not chip.is_file():
+            raise FileNotFoundError(f"chip for extract id {ids[gi]!r} not found in {root}")
+        pixel_rows, pixel_cols = _pixel_crop_bounds(size_px, margin_px, patch_size, ordinal)
+        with Image.open(chip) as image:
+            rgb = image.convert("RGB")
+            if rgb.size != (size_px, size_px):
+                raise ValueError(f"chip {chip} is {rgb.size}, expected {(size_px, size_px)}")
+            cropped = rgb.crop((pixel_cols.start, pixel_rows.start, pixel_cols.stop, pixel_rows.stop))
+            resized = cropped.resize((size_px, size_px), Image.BILINEAR)
+            array = np.asarray(resized, dtype=np.float32) / 255.0
+        tensor = torch.from_numpy(array).permute(2, 0, 1).unsqueeze(0).contiguous().to(device)
+        with torch.no_grad():
+            feature = backbone(tensor).detach().cpu()
+        _fused, codes = encode_from_features(stem, mix, head, feature, device=device)
+        queries.append({"kind": "crop-jitter", "query_kind": "reencoded-crop",
+                        "source": gi, "true": gi, "codes": codes[0].numpy(),
+                        "features": feature[0].numpy()})
+    return queries, {
+        "chips_dir": str(root), "backbone_mode": backbone.mode,
+        "backbone_source": backbone.source, "fsq_ckpt": str(Path(fsq_ckpt)),
+        "size_px": int(size_px), "crop_margin_px": margin_px,
+        "resize_px": int(size_px), "n_reencoded": len(queries),
+    }
+
+
 def _mode_score(mode: str, query_codes: np.ndarray, query_features: np.ndarray,
                 gallery_codes: np.ndarray, gallery_features: np.ndarray,
                 codebook_size: int) -> float:
@@ -102,6 +185,8 @@ def evaluate_place_score(
     axis: str | int | None = "auto",
     crop_margin: int = 2,
     top_k: int = 5,
+    query_kind: str = "stored-grid-crop",
+    crop_queries: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Evaluate crop-jitter/overlap positives against far spatial negatives."""
     code_grids = _grid(codes, "codes")
@@ -124,13 +209,16 @@ def evaluate_place_score(
     overlap_radius_m = chip_size_m
     h, w = code_grids.shape[1:]
 
-    queries: list[dict[str, Any]] = []
-    for ordinal, gi_raw in enumerate(gallery.tolist()):
-        gi = int(gi_raw)
-        rows, cols = _crop_bounds(h, w, int(crop_margin), ordinal)
-        queries.append({"kind": "crop-jitter", "source": gi, "true": gi,
-                        "codes": code_grids[gi, rows, cols],
-                        "features": feature_grids[gi, :, rows, cols]})
+    if query_kind not in {"stored-grid-crop", "reencoded-crop"}:
+        raise ValueError(f"unknown query_kind {query_kind!r}")
+    queries: list[dict[str, Any]] = list(crop_queries or [])
+    if query_kind == "stored-grid-crop":
+        for ordinal, gi_raw in enumerate(gallery.tolist()):
+            gi = int(gi_raw)
+            rows, cols = _crop_bounds(h, w, int(crop_margin), ordinal)
+            queries.append({"kind": "crop-jitter", "query_kind": query_kind,
+                            "source": gi, "true": gi, "codes": code_grids[gi, rows, cols],
+                            "features": feature_grids[gi, :, rows, cols]})
 
     # Each gallery chip gets at most one distinct, nearest overlap target. Self is
     # deliberately excluded: crop-of-self already measures that controlled case.
@@ -144,7 +232,8 @@ def evaluate_place_score(
             if float(distances[nearest]) <= overlap_radius_m:
                 overlap_pairs.append((qi, int(candidates[nearest])))
     for qi, true_i in overlap_pairs:
-        queries.append({"kind": "spatial-overlap", "source": qi, "true": true_i,
+        queries.append({"kind": "spatial-overlap", "query_kind": "stored-full-chip",
+                        "source": qi, "true": true_i,
                         "codes": code_grids[qi], "features": feature_grids[qi]})
 
     modes: dict[str, Any] = {}
@@ -175,7 +264,8 @@ def evaluate_place_score(
             hits += int(rank1_hit)
             if topk_hit:
                 conditional_xy.append(float(np.linalg.norm(positions[query["source"], :2] - positions[true_i, :2])))
-            rows_out.append({"kind": query["kind"], "query_id": ids[int(query["source"])],
+            rows_out.append({"kind": query["kind"], "query_kind": query["query_kind"],
+                             "query_id": ids[int(query["source"])],
                              "true_id": ids[true_i], "true_score": true_score,
                              "rank1_hit": rank1_hit, "true_in_top_k": topk_hit})
         for fi_raw in far.tolist():
@@ -215,12 +305,13 @@ def evaluate_place_score(
     return {
         "track": "colorado-place-verification",
         "protocol": "same-place overlap / crop-jitter",
+        "query_kind": query_kind,
         "not": ["university1652", "ortholoc", "colorado-flight-ate", "hunter", "vla"],
         "network": False,
         "descriptor": BAG_OF_CODES_DESCRIPTOR,
         "auroc": headline["auroc"],
         "recall_at_1_same_place": headline["recall_at_1_same_place"],
-        "n_crop_queries": int(gallery.size),
+        "n_crop_queries": sum(q["kind"] == "crop-jitter" for q in queries),
         "n_overlap_queries": len(overlap_pairs),
         "n_far_queries": int(far.size),
         "n_gallery": int(gallery.size),
@@ -246,18 +337,41 @@ def evaluate_place_score(
 def evaluate_place_score_dirs(extract_dir: str | Path, fsq_dir: str | Path, *,
                               gsd_m: float = 0.3, query_fraction: float = 0.25,
                               axis: str | int | None = "auto", crop_margin: int = 2,
-                              top_k: int = 5, out: str | Path | None = None) -> dict[str, Any]:
+                              top_k: int = 5, out: str | Path | None = None,
+                              query_kind: str = "stored-grid-crop",
+                              chips_dir: str | Path | None = None,
+                              fsq_ckpt: str | Path | None = None,
+                              backbone_mode: str = "vitb14",
+                              weights_path: str | Path | None = None,
+                              device: str = "cpu", allow_download: bool = False,
+                              max_crop_queries: int | None = None) -> dict[str, Any]:
     payload = load_retrieve_inputs(extract_dir, fsq_dir)
     # load_retrieve_inputs intentionally flattens code grids for legacy chip
     # retrieval; place verification needs their stored spatial layout.
     spatial_codes = np.load(Path(fsq_dir) / "codes.npy")
     size_px = int(payload["extract_meta"].get("size", payload["extract_meta"].get("chip_size", 224)))
+    crop_queries = None
+    reencode_meta: dict[str, Any] = {}
+    if query_kind == "reencoded-crop":
+        if chips_dir is None:
+            raise ValueError("chips_dir is required for reencoded-crop")
+        checkpoint = Path(fsq_ckpt) if fsq_ckpt is not None else Path(fsq_dir) / "stage1_last.pt"
+        patch_size = int(payload["extract_meta"].get("patch_size", 14))
+        split = spatial_holdout_indices(payload["xyz"], query_fraction=query_fraction, axis=axis)
+        crop_queries, reencode_meta = _reencode_crop_queries(
+            chips_dir, payload["ids"], split["gallery_idx"], checkpoint,
+            size_px=size_px, patch_size=patch_size, crop_margin=crop_margin,
+            backbone_mode=backbone_mode, weights_path=weights_path, device=device,
+            allow_download=allow_download, max_crop_queries=max_crop_queries,
+        )
     report = evaluate_place_score(spatial_codes, payload["features"], payload["xyz"],
                                   codebook_size=payload["codebook_size"], ids=payload["ids"],
                                   gsd_m=gsd_m, size_px=size_px, query_fraction=query_fraction,
-                                  axis=axis, crop_margin=crop_margin, top_k=top_k)
+                                  axis=axis, crop_margin=crop_margin, top_k=top_k,
+                                  query_kind=query_kind, crop_queries=crop_queries)
     report.update({"extract_dir": payload["extract_dir"], "fsq_dir": payload["fsq_dir"],
                    "xyz_source": payload["xyz_source"]})
+    report.update(reencode_meta)
     if out is not None:
         path = Path(out)
         path.parent.mkdir(parents=True, exist_ok=True)

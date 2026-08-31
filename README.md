@@ -185,18 +185,22 @@ A metric is reportable only when a script, split, and saved artifact exist for t
 
 ### 5.7 Colorado retrieval eval (CPU, no network)
 
-For the “is this that place?” bar, run `monarc eval-place-score` on local
-extract+FSQ caches. It creates aligned crop-jitter queries from cached DINO and
-code grids, reports any distinct chips that genuinely fall within the declared
+For the “is this that place?” bar, run `monarc eval-place-score` with
+`--query-kind reencoded-crop --chips DIR`. It pixel-crops and resizes chip PNGs,
+then re-extracts query DINO+FSQ grids while keeping the gallery extract unchanged.
+The default `stored-grid-crop` remains a cache diagnostic. The evaluator reports
+any distinct chips that genuinely fall within the declared
 chip-size overlap radius, and uses the existing far spatial box only for
 negative scores. JSON includes bag-of-codes, pooled DINO, and sliding-window
 DINO-grid AUROC/Recall@1, conditional top-K xy, and mutual-nearest grid inliers.
-It never reloads PNGs or extracts features.
+Downloads remain disabled unless explicitly enabled.
 
 ```
 python -m monarc.cli eval-place-score \
   --extract artifacts/extract \
   --fsq artifacts/fsq \
+  --query-kind reencoded-crop \
+  --chips data/chips \
   --out artifacts/colorado_place_score.json
 ```
 

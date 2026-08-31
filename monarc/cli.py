@@ -118,6 +118,9 @@ def _cmd_eval_place_score(args: argparse.Namespace) -> int:
     report = evaluate_place_score_dirs(
         args.extract, args.fsq, gsd_m=args.gsd_m, query_fraction=args.query_fraction,
         axis=args.axis, crop_margin=args.crop_margin, top_k=args.top_k, out=args.out,
+        query_kind=args.query_kind, chips_dir=args.chips, fsq_ckpt=args.fsq_ckpt,
+        backbone_mode=args.backbone, weights_path=args.weights, device=args.device,
+        allow_download=args.allow_download, max_crop_queries=args.max_crop_queries,
     )
     json.dump(report, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
@@ -350,6 +353,18 @@ def build_parser() -> argparse.ArgumentParser:
                           help="Far spatial-box axis only")
     place_ev.add_argument("--crop-margin", type=int, default=2, help="Crop margin in DINO patches")
     place_ev.add_argument("--top-k", type=int, default=5)
+    place_ev.add_argument("--query-kind", choices=["stored-grid-crop", "reencoded-crop"],
+                          default="stored-grid-crop")
+    place_ev.add_argument("--chips", type=Path,
+                          help="Chip PNG directory (required for reencoded-crop)")
+    place_ev.add_argument("--fsq-ckpt", type=Path,
+                          help="Stage-1 checkpoint (default: <fsq>/stage1_last.pt)")
+    place_ev.add_argument("--backbone", choices=["vitb14", "stub"], default="vitb14")
+    place_ev.add_argument("--weights", type=Path, help="Optional local DINO weights")
+    place_ev.add_argument("--device", default="cpu")
+    place_ev.add_argument("--max-crop-queries", type=int)
+    place_ev.add_argument("--allow-download", action="store_true",
+                          help="Permit model download (disabled by default)")
     place_ev.set_defaults(func=_cmd_eval_place_score)
 
     match_ev = sub.add_parser(
