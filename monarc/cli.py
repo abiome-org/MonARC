@@ -1,17 +1,75 @@
-"""Command-line entry: dry-run, AOI ingest, public-UAV bench listing."""
+"""Command-line entry: dry-run, extract, train-fsq, AOI ingest, UAV benches."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
+
+
+def default_torch_device() -> str:
+    try:
+        import torch
+
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        return "cpu"
+
+
+def _allow_download_flag(args: argparse.Namespace) -> bool:
+    if bool(getattr(args, "allow_download", False)):
+        return True
+    raw = os.environ.get("MONARC_DINO_ALLOW_DOWNLOAD", "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _cmd_dry_run(args: argparse.Namespace) -> int:
     from monarc.dryrun import run_dry_run
 
     report = run_dry_run(args.out, seed=args.seed, steps=args.steps, device="cpu")
+    json.dump(report, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+    return 0
+
+
+def _cmd_extract(args: argparse.Namespace) -> int:
+    from monarc.map.extract import extract_chips
+
+    meta = extract_chips(
+        args.chips,
+        args.out,
+        size=args.size,
+        dsm_dir=args.dsm_dir,
+        xyz_path=args.xyz,
+        backbone_mode=args.backbone,
+        weights_path=args.weights,
+        allow_download=_allow_download_flag(args),
+        device=args.device,
+        batch_size=args.batch_size,
+        fsq_ckpt=args.fsq_ckpt,
+    )
+    json.dump(meta, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+    return 0
+
+
+def _cmd_train_fsq(args: argparse.Namespace) -> int:
+    from monarc.map.train_fsq import train_fsq_from_cache
+
+    report = train_fsq_from_cache(
+        args.features,
+        args.out,
+        steps=args.steps,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        device=args.device,
+        ckpt_every=args.ckpt_every,
+        keep_last=args.keep_last,
+        resume=args.resume,
+        seed=args.seed,
+    )
     json.dump(report, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
     return 0
@@ -46,7 +104,11 @@ def _cmd_bench_uav(args: argparse.Namespace) -> int:
     if args.root is None:
         sys.stderr.write("--root is required unless --list-benches is set\n")
         return 2
-    bench = University1652(args.root)
+    bench = University1652(
+        args.root,
+        download=args.download,
+        download_url=args.download_url,
+    )
     payload = bench.summary()
     if not args.list_only:
         payload["pairs"] = [
@@ -62,8 +124,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="monarc",
         description=(
-            "MonARC first executable path: frozen-DINO stub tokens, tiny FSQ, "
-            "code-xyz index, retrieve, matcher+PnP/LM. CPU dry-run. No Hunter."
+            "MonARC: frozen DINOv2-B (stub by default; official vitb14 on GPU), "
+            "FSQ train, code-xyz index, retrieve, matcher+PnP/LM. No Hunter."
         ),
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -76,6 +138,48 @@ def build_parser() -> argparse.ArgumentParser:
     dry.add_argument("--seed", type=int, default=0)
     dry.add_argument("--steps", type=int, default=8)
     dry.set_defaults(func=_cmd_dry_run)
+
+    extract = sub.add_parser(
+        "extract",
+        help="RGB chips -> frozen DINO features + xyz sidecar (optional DSM, optional FSQ codes)",
+    )
+    extract.add_argument("--chips", type=Path, required=True, help="Directory of RGB chips")
+    extract.add_argument("--out", type=Path, required=True)
+    extract.add_argument("--dsm-dir", type=Path, default=None)
+    extract.add_argument("--xyz", type=Path, default=None, help="Optional xyz.npy or filename,x,y,z CSV")
+    extract.add_argument("--size", type=int, default=224, help="Square resize; must be divisible by 14")
+    extract.add_argument(
+        "--backbone",
+        default="auto",
+        choices=["auto", "stub", "vitb14"],
+        help="auto: stub on CPU / when weights absent; vitb14 when CUDA cache or --allow-download",
+    )
+    extract.add_argument("--weights", type=Path, default=None, help="Local DINOv2-B .pth or HF dir")
+    extract.add_argument(
+        "--allow-download",
+        action="store_true",
+        help="Permit torch.hub facebookresearch/dinov2:dinov2_vitb14 (or HF facebook/dinov2-base)",
+    )
+    extract.add_argument("--device", default=None)
+    extract.add_argument("--batch-size", type=int, default=8)
+    extract.add_argument("--fsq-ckpt", type=Path, default=None, help="Optional stage1_last.pt to emit codes.npy")
+    extract.set_defaults(func=_cmd_extract)
+
+    train = sub.add_parser(
+        "train-fsq",
+        help="Train fusion+FSQ on extract features (GPU). Writes codes.npy + xyz sidecar + checkpoints.",
+    )
+    train.add_argument("--features", type=Path, required=True, help="Directory from monarc extract")
+    train.add_argument("--out", type=Path, required=True)
+    train.add_argument("--steps", type=int, default=200)
+    train.add_argument("--batch-size", type=int, default=8)
+    train.add_argument("--lr", type=float, default=1e-3)
+    train.add_argument("--device", default=None)
+    train.add_argument("--ckpt-every", type=int, default=50)
+    train.add_argument("--keep-last", type=int, default=3)
+    train.add_argument("--resume", type=Path, default=None)
+    train.add_argument("--seed", type=int, default=0)
+    train.set_defaults(func=_cmd_train_fsq)
 
     aoi = sub.add_parser(
         "ingest-aoi",
@@ -101,6 +205,12 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--root", type=Path, default=None)
     bench.add_argument("--list-only", action="store_true")
     bench.add_argument("--list-benches", action="store_true")
+    bench.add_argument(
+        "--download",
+        action="store_true",
+        help="Fetch a licensed zip/tar into --root (requires --download-url or MONARC_U1652_URL)",
+    )
+    bench.add_argument("--download-url", default=None)
     bench.set_defaults(func=_cmd_bench_uav)
     return parser
 
@@ -108,6 +218,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if getattr(args, "device", None) is None and args.cmd in {"extract", "train-fsq"}:
+        args.device = default_torch_device()
     return int(args.func(args))
 
 

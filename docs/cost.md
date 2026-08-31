@@ -127,7 +127,7 @@ Do not use on-demand p4d / p5, A100, or H100 on the data plane. Frozen DINOv2 ov
 | Allowed | Vast.ai or Salad RTX 4090 if cheaper than that listed Runpod rate | listed at booking |
 | Forbidden | A100, H100, `p4d`, `p5` | — |
 
-Do **not** pull the Colorado NAIP vintage off AWS onto the train plane. That egress is listed **$0.09 / GB** and is the bill-exploding path. Stage 1 uses a sampled tile set (tiny versus the vintage). Stage 2 uses University-1652, DenseUAV, SUES-200, and OrthoLoC.
+Do **not** pull the Colorado NAIP vintage off AWS onto the train plane. That egress is listed **$0.09 / GB** and is the bill-exploding path. Stage 1 uses a sampled tile set (tiny versus the vintage). Stage 2 uses University-1652, DenseUAV, SUES-200, and OrthoLoC. On the 4090, `monarc extract` writes DINO feature grids + xyz; `monarc train-fsq` trains FSQ on that cache. Checkpoint often and stop the Community Cloud pod when idle. Rasters stay off the train plane and off R2.
 
 ### 6.3 Product store — Cloudflare R2
 

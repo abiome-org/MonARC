@@ -1,7 +1,7 @@
 # MonARC: Visual GPS-Denied Localization via Emergent Metric Landmarks
 
 Date: 2026-08-30  
-Status: Specification plus first executable CPU path (subsystems 1–3 dry-run)  
+Status: Specification plus CPU stub path and optional GPU DINOv2-B/14 extract+FSQ  
 Repository: [abiome-org/MonARC](https://github.com/abiome-org/MonARC)  
 License: MIT  
 
@@ -95,7 +95,7 @@ python -m pip install -e ".[dev]"
 python -m pytest tests
 ```
 
-Tests use a frozen patch-14 768-d DINOv2-B **contract stub**. They do not download DINOv2 weights, NAIP/3DEP rasters, or University-1652. CUDA is not required.
+Tests use a frozen patch-14 768-d DINOv2-B **contract stub**. They do not download DINOv2 weights, NAIP/3DEP rasters, or University-1652. CUDA is not required. Official `dinov2_vitb14` weights are the GPU extract path (§5.5).
 
 ### 5.2 Dry-run CLI
 
@@ -124,9 +124,47 @@ University-1652 is the first loader: ImageFolder building IDs, optional local do
 ```
 python -m monarc.cli bench-uav --list-benches
 python -m monarc.cli bench-uav --root /path/to/University-1652 --list-only
+python -m monarc.cli bench-uav --root /data/University-1652 --download --download-url "$MONARC_U1652_URL" --list-only
 ```
 
-### 5.5 Two report tracks
+`--download` fetches a zip/tar you already have a URL for (`--download-url` or `MONARC_U1652_URL`). The dataset is request-gated ([University1652-Baseline](https://github.com/layumi/University1652-Baseline)); this CLI does not scrape Google Drive. Tests keep using the JPEG fixture (no network).
+
+### 5.5 GPU path: extract + FSQ on a Community Cloud RTX 4090
+
+CPU `pytest` stays on the DINO **stub** (no hub, no Hugging Face). On a Runpod Community RTX 4090 (train plane; listed $0.34/hr as of 2026-08-27, not an invoice), load official frozen DINOv2-B/14 (`torch.hub` `facebookresearch/dinov2` / `dinov2_vitb14`, or Hugging Face `facebook/dinov2-base`).
+
+Do **not** copy NAIP/3DEP rasters onto the 4090 or to R2. Extract writes DINO feature grids + xyz sidecar. `train-fsq` consumes those features, checkpoints often, and writes `codes.npy` + xyz. Product boundary remains Colorado; Golden–Morrison is the first slice, not statewide ingest.
+
+```
+python -m pip install -e ".[dev]"
+
+# Frozen DINOv2-B/14 once (allow hub/HF). Default without this flag is the stub.
+python -m monarc.cli extract \
+  --chips /data/chips \
+  --out artifacts/extract \
+  --backbone vitb14 \
+  --allow-download \
+  --device cuda \
+  --size 224
+
+# FSQ + fusion on cached features. Checkpoint every 50 steps; keep 3 tagged files.
+python -m monarc.cli train-fsq \
+  --features artifacts/extract \
+  --out artifacts/fsq \
+  --device cuda \
+  --steps 2000 \
+  --ckpt-every 50 \
+  --keep-last 3 \
+  --resume artifacts/fsq/stage1_last.pt
+```
+
+`--resume` is optional on the first run (omit it if `stage1_last.pt` does not exist yet). Outputs: `features.npy`, `codes.npy`, `xyz.npy`, `stage1_last.pt`, `ckpt_step_*.pt`. No GeoTIFF mirror.
+
+Community Cloud bills wall clock while the pod is up. Checkpoint often (`--ckpt-every`), then **stop the pod when the process exits or when idle**. Do not leave an idle 4090 running. `dry-run` remains the CPU synthetic path and does not download weights.
+
+`--backbone auto` uses the stub on CPU and when weights are absent; on CUDA it uses cached `dinov2_vitb14` or downloads if `--allow-download` is set.
+
+### 5.6 Two report tracks
 
 Keep these separate. Do not invent or copy numbers between them.
 

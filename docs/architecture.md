@@ -412,6 +412,8 @@ Pose: code matcher -> 2D-3D ties -> DLT PnP + Levenberg-Marquardt on se(3)
 Persist: codes.npy, xyz.npy, meta.json (no GeoTIFF, no naip-source, no R2 rasters)
 ```
 
-Official DINOv2-B weights are not downloaded by tests or the dry-run CLI. The dry-run uses a frozen patch-14 768-d stub that matches the tensor contract; a local weights file may be supplied later via `FrozenDinoBackbone(mode="vitb14", weights_path=...)`.
+Official DINOv2-B/14 (`torch.hub` `facebookresearch/dinov2` entry `dinov2_vitb14`, or Hugging Face `facebook/dinov2-base`) loads only when `mode="vitb14"` / CUDA `auto` with a local cache or `allow_download=True`. Tests, `dry-run`, and CPU `auto` use the frozen patch-14 768-d stub and do not download weights.
+
+`monarc extract` reads a directory of RGB chips (optional DSM, xyz sidecar) and writes `features.npy` + `xyz.npy` (optional `codes.npy` if an FSQ checkpoint is supplied). `monarc train-fsq` trains fusion+FSQ on that cache on GPU and checkpoints `stage1_last.pt`. Rasters are not a persist object and must not be copied to R2. v1 coverage remains Colorado; Golden–Morrison is the rehearsal slice.
 
 The Perceiver set transformer remains specified in §4 as a later Where-Am-I path. v0 pose is matcher + geometry. Hunter (subsystem 4) is unspecified in code in this increment.
