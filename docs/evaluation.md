@@ -26,6 +26,20 @@ Until Colorado NAIP/3DEP indexes and public-UAV adapters have separate executed 
 
 Do not average, mix, or relabel these tracks. Do not publish numeric gates in documentation until a named script, split, and artifact exist for that track.
 
+### 1.2 Colorado retrieval script (`monarc eval-retrieve`)
+
+The Colorado retrieval track is executed by `monarc eval-retrieve --extract <dir> --fsq <dir>`. Inputs are local `features.npy` (extract), `codes.npy` and `xyz.npy` (FSQ train output). No network.
+
+**Split**: axis-aligned spatial box. The high side of the longer east/north span of chip xyz is held out as queries; the complementary half-space is the gallery. Do not sample random neighboring chips.
+
+**Metrics** (printed JSON; write `--out` to persist):
+
+- Recall@1 / Recall@5: fraction of queries whose spatially nearest gallery chip appears in the bag-of-codes ranking.
+- Median and P90 xyz error: Euclidean distance (3D if z is finite, else horizontal xy) between the query chip xyz and the rank-1 retrieved gallery chip. Oracle distances to the nearest gallery chip are reported alongside so the holdout gap is visible.
+- `split.tiny` / `note`: set when `n_chips < 128` or `n_query < 32` (the Golden–Morrison 64-chip rehearsal is in this band). Tiny splits are not Colorado-state or flight results.
+
+This is map-side chip retrieval on FSQ codes. It is not matcher+PnP pose, not University-1652, and not a Hunter policy eval. Do not paste numbers into this file; the executable report is the JSON from a named run.
+
 ---
 
 ## 2. Benchmark Evaluation Protocols

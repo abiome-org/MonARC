@@ -178,10 +178,25 @@ Community Cloud bills wall clock while the pod is up. Checkpoint often (`--ckpt-
 
 Keep these separate. Do not invent or copy numbers between them.
 
-1. **Colorado retrieval** — FSQ codes and xyz over ingested NAIP visualization + 3DEP inside Colorado (Golden–Morrison rehearsal first; the product remains the state).
-2. **Public-UAV adapter** — perspective encoder / retrieval on University-1652 (later DenseUAV, SUES-200, OrthoLoC).
+1. **Colorado retrieval** — bag-of-codes over ingested NAIP visualization + 3DEP xyz inside Colorado (Golden–Morrison rehearsal first; the product remains the state). Script: `monarc eval-retrieve` (§5.7).
+2. **Public-UAV adapter** — perspective encoder / retrieval on University-1652 (later DenseUAV, SUES-200, OrthoLoC). Script: `monarc bench-uav` (§5.4). Do not copy Colorado-track JSON into this track.
 
 A metric is reportable only when a script, split, and saved artifact exist for that track ([`docs/evaluation.md`](./docs/evaluation.md)).
+
+### 5.7 Colorado retrieval eval (CPU, no network)
+
+`monarc eval-retrieve` is the Colorado retrieval track on a real extract+FSQ chip cache (`features.npy`, `codes.npy`, `xyz.npy`). It does not download weights or rasters. It does not run Hunter. Query chips are a spatial box (high side of the longer east/north span), not a random sample of neighboring chips. Rank-1 xyz error is the retrieved gallery chip versus the query chip. Recall@K is whether the spatially nearest gallery chip is in the top K.
+
+On the Golden–Morrison 64-chip rehearsal the split is tiny; the JSON sets `split.tiny` and states that in `note`. Those figures are that chip set only — not University-1652 Recall@1 and not Colorado GPS-denied flight ATE. CPU pytest uses a handful of fixture codes/xyz; it does not encode a Runpod unique-code count.
+
+```
+python -m monarc.cli eval-retrieve \
+  --extract artifacts/extract \
+  --fsq artifacts/fsq \
+  --out artifacts/colorado_retrieve.json
+```
+
+`--extract` and `--fsq` are local directories from `monarc extract` / `monarc train-fsq` (for example a stopped Runpod volume). No AWS. Public-UAV remains `bench-uav`.
 
 ---
 

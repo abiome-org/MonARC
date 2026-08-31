@@ -89,6 +89,7 @@ MonARC/
 |   |   +-- calibrator.py       # Temperature scaling / isotonic confidence calibration
 |   +-- localization/           # Subsystem 3: Where-am-I estimation head
 |   |   +-- global_retrieve.py  # Lost-in-space coarse tile retrieval (MegaLoc/n-gram)
+|   |   +-- eval_retrieve.py    # Colorado-track bag-of-codes retrieve on spatial chip holdout
 |   |   +-- dpnp.py             # Differentiable PnP particle initializer
 |   |   +-- perceiver.py        # Set transformer for correspondence-to-pose cross-attention
 |   |   +-- posterior.py        # SE(3) particle filter and Gaussian mixture representations
@@ -104,6 +105,7 @@ MonARC/
 |   +-- test_fusion_stem.py     # Channel fusion dimensionality and gradient flow
 |   +-- test_fsq.py             # Codebook quantization determinism and collision rates
 |   +-- test_frustum.py         # Camera ray terrain intersection accuracy
+|   +-- test_eval_retrieve.py   # Colorado-track spatial holdout Recall@K and xyz error
 |   +-- test_perceiver.py       # Where-am-I permutation invariance over correspondences
 |   +-- test_hunter_env.py      # Frustum gym state transitions and information gain
 ```
