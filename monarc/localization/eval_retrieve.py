@@ -400,7 +400,7 @@ def write_retrieve_fixture(
     spacing_m: float = 10.0,
     match_nearest: bool = True,
 ) -> dict[str, Any]:
-    """Tiny local codes/xyz/features for CPU tests. Not a 888-code claim."""
+    """Tiny local codes/xyz/features for CPU tests."""
     extract_dir = Path(extract_dir)
     fsq_dir = Path(fsq_dir)
     extract_dir.mkdir(parents=True, exist_ok=True)
