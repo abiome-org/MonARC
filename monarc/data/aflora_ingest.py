@@ -601,6 +601,8 @@ def build_aoi_manifest(
     chip_size: int = DEFAULT_CHIP_SIZE_PX,
     chip_grid: int = DEFAULT_CHIP_GRID,
     max_chips: int = DEFAULT_MAX_CHIPS,
+    overlap_frac: float = 0.0,
+    gsd_m: float = 0.3,
 ) -> dict:
     """Intersect the AOI with NAIP and public 3DEP. Default source needs no AWS."""
     if source not in INGEST_SOURCES:
@@ -709,7 +711,8 @@ def build_aoi_manifest(
             }
         )
     windows = plan_chip_windows(
-        aoi, chip_items, size_px=chip_size, grid=chip_grid, max_chips=max_chips
+        aoi, chip_items, size_px=chip_size, grid=chip_grid, max_chips=max_chips,
+        overlap_frac=overlap_frac, gsd_m=gsd_m,
     )
 
     aws_required = source == SOURCE_NAIP_VISUALIZATION
@@ -762,7 +765,8 @@ def build_aoi_manifest(
             ),
         },
         "chip_extract": chip_plan_block(
-            windows, size_px=chip_size, grid=chip_grid, max_chips=max_chips
+            windows, size_px=chip_size, grid=chip_grid, max_chips=max_chips,
+            overlap_frac=overlap_frac, gsd_m=gsd_m,
         ),
         "persist": persist,
         "coverage_note": (
@@ -889,6 +893,8 @@ def ingest_aoi_to_path(
     chip_size: int = DEFAULT_CHIP_SIZE_PX,
     chip_grid: int = DEFAULT_CHIP_GRID,
     max_chips: int = DEFAULT_MAX_CHIPS,
+    overlap_frac: float = 0.0,
+    gsd_m: float = 0.3,
     window_reader: WindowReader | None = None,
     materialize_only: bool = False,
     http_get: HttpGet | None = None,
@@ -931,6 +937,8 @@ def ingest_aoi_to_path(
             chip_size=chip_size,
             chip_grid=chip_grid,
             max_chips=max_chips,
+            overlap_frac=overlap_frac,
+            gsd_m=gsd_m,
             http_get=http_get,
             http_post=http_post,
             http_get_text=http_get_text,
@@ -942,6 +950,8 @@ def ingest_aoi_to_path(
             chip_size=chip_size,
             chip_grid=chip_grid,
             max_chips=max_chips,
+            overlap_frac=overlap_frac,
+            gsd_m=gsd_m,
             http_get=http_get,
             http_post=http_post,
             http_get_text=http_get_text,

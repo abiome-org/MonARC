@@ -4,9 +4,10 @@ import json
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 from monarc.cli import main
-from monarc.common.coordinates import GOLDEN_MORRISON_AOI
+from monarc.common.coordinates import GOLDEN_MORRISON_AOI, box_from_center, geodetic_to_utm
 from monarc.data.aflora_ingest import (
     DEFAULT_SOURCE,
     SOURCE_COLORADO_PUBLIC,
@@ -20,7 +21,7 @@ from monarc.data.aflora_ingest import (
     visualization_uri_from_stac_item,
 )
 from monarc.data.pc_sas import apply_sas_token, unsigned_href
-from monarc.map.cog_chips import materialize_chips_from_manifest
+from monarc.map.cog_chips import materialize_chip_windows, materialize_chips_from_manifest, plan_chip_windows
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "inventory"
 
@@ -169,6 +170,19 @@ def test_cli_offline_ingest(tmp_path):
     assert payload["credentials"]["aws_required"] is False
 
 
+def test_offline_ingest_records_overlap_stride_metadata(tmp_path):
+    out = tmp_path / "overlap-manifest.json"
+    path = ingest_aoi_to_path(out, offline=FIXTURE_DIR, overlap_frac=0.5,
+                              gsd_m=0.3, chip_size=224, max_chips=8)
+    plan = json.loads(path.read_text())["chip_extract"]
+    assert plan["overlap_frac"] == 0.5
+    assert plan["stride_m"] < plan["chip_size_m"]
+    assert plan["n_windows"] <= plan["max_chips"] == 8
+    assert plan["range_read"] is True
+    assert plan["copy_full_geotiff"] is False
+    assert plan["r2_rasters"] is False
+
+
 def test_cli_offline_chips(tmp_path):
     out = tmp_path / "manifest.json"
     chips = tmp_path / "chips"
@@ -193,6 +207,40 @@ def test_cli_offline_chips(tmp_path):
     meta = json.loads((chips / "chips_meta.json").read_text())
     assert meta["rasters_copied"] is False
     assert meta["full_geotiff"] is False
+
+
+def test_overlap_windows_range_read_new_pixels_from_larger_tile(tmp_path):
+    aoi = box_from_center(39.725, -105.220, 0.18)
+    east, north, _zone, _hemi = geodetic_to_utm(aoi.center_lat, aoi.center_lon)
+    size = 32
+    item = {
+        "id": "local-pattern-tile", "bbox": list(aoi.bbox), "catalog_href": "fixture://tile",
+        "properties": {"proj:epsg": 26913, "proj:shape": [800, 800],
+                       "proj:transform": [0.3, 0.0, east - 120.0, 0.0, -0.3, north + 120.0]},
+    }
+    windows = plan_chip_windows(aoi, [item], size_px=size, max_chips=8,
+                                overlap_frac=0.5, gsd_m=0.3)
+    assert len(windows) >= 2
+    adjacent = next((a, b) for a, b in zip(windows, windows[1:])
+                    if a["row_off"] == b["row_off"])
+    first, second = adjacent
+    stride_px = second["col_off"] - first["col_off"]
+    assert 0 < stride_px < size
+
+    yy, xx = np.mgrid[:800, :800]
+    tile = np.stack((xx % 251, yy % 251, (xx + yy) % 251), axis=-1).astype(np.uint8)
+    reads = []
+    def reader(_href, col, row, width, height):
+        reads.append((col, row, width, height))
+        return tile[row:row + height, col:col + width]
+    materialize_chip_windows([first, second], tmp_path / "chips", reader=reader)
+    assert reads == [(first["col_off"], first["row_off"], size, size),
+                     (second["col_off"], second["row_off"], size, size)]
+    # The second range read includes tile pixels beyond the first standalone PNG.
+    second_png = np.asarray(Image.open(tmp_path / "chips" / f"{second['id']}.png"))
+    assert np.array_equal(second_png[:, -1], tile[second["row_off"]:second["row_off"] + size,
+                                                   second["col_off"] + size - 1])
+    assert second["col_off"] + size - 1 > first["col_off"] + size - 1
 
 
 def test_materialize_only_from_manifest(tmp_path):

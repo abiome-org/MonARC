@@ -185,9 +185,12 @@ A metric is reportable only when a script, split, and saved artifact exist for t
 
 ### 5.7 Colorado retrieval eval (CPU, no network)
 
-For the “is this that place?” bar, run `monarc eval-place-score` with
-`--query-kind reencoded-crop --chips DIR`. It pixel-crops and resizes chip PNGs,
-then re-extracts query DINO+FSQ grids while keeping the gallery extract unchanged.
+For the “is this that place?” bar, first create a small capped range-read grid
+with genuine adjacent coverage, for example `monarc ingest-aoi --size-km 0.2
+--overlap-frac 0.5 --max-chips 64 ...`, then run `monarc eval-place-score` with
+`--query-kind reencoded-overlap --chips DIR`. It re-encodes full source PNGs and
+uses their spatially overlapping neighbor as truth while keeping the gallery
+extract unchanged.
 The default `stored-grid-crop` remains a cache diagnostic. The evaluator reports
 any distinct chips that genuinely fall within the declared
 chip-size overlap radius, and uses the existing far spatial box only for
@@ -199,7 +202,7 @@ Downloads remain disabled unless explicitly enabled.
 python -m monarc.cli eval-place-score \
   --extract artifacts/extract \
   --fsq artifacts/fsq \
-  --query-kind reencoded-crop \
+  --query-kind reencoded-overlap \
   --chips data/chips \
   --out artifacts/colorado_place_score.json
 ```

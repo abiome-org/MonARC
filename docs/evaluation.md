@@ -60,7 +60,7 @@ same-place decision grain. Its default `stored-grid-crop` query kind slices
 cached `features.npy` and `codes.npy`; this is a cache-alignment diagnostic, not
 an independently encoded view.
 
-The product-grain `reencoded-crop` query kind loads each gallery chip PNG,
+The `reencoded-crop` query kind loads each gallery chip PNG,
 applies the configured patch-margin crop and one-patch ordinal jitter, resizes
 the pixel crop to the extract size with bilinear interpolation, and sends it
 through frozen DINOv2-B/14 and the existing frozen Stage-1 FSQ checkpoint. For
@@ -70,14 +70,30 @@ the unchanged extract; it is never re-encoded by this evaluation. Downloads are
 disabled by default, and the command records the query kind and local model
 inputs in JSON.
 
+The product-grain `reencoded-overlap` query kind instead selects the nearest
+distinct gallery neighbor whose center is within one chip width, loads the
+source neighbor PNG in full, and independently re-encodes it through the same
+frozen DINO and FSQ path. Its true identity is the overlapping neighbor, and
+the source chip is masked from ranking. It adds neither stored-grid crops nor
+stored full-chip rows, so its headline AUROC and Recall@1 contain only genuine
+neighbor-overlap positives against the spatially held-out far negatives.
+This requires an ingest whose center spacing is smaller than the chip width.
+`reencoded-crop` remains a same-PNG crop-and-resize test; it does not contain
+pixels from an adjacent region.
+
 The gallery is the complement of the existing high-side spatial-box holdout.
-Each selected gallery chip supplies one crop-jitter query whose true identity is
+For the crop query kinds, each selected gallery chip supplies one crop-jitter query whose true identity is
 that gallery chip. Distinct gallery chips also supply spatial-overlap
 queries when their horizontal center distance is no greater than
 `chip_size_m = extract_size_px * gsd_m`; the JSON reports the observed count,
 including zero. Self is excluded from this distinct-overlap count. The held-out
 spatial box supplies geographically disjoint far queries and is used only for
 negative pair scores.
+
+A coarse AOI grid whose chip width is much smaller than its center spacing
+honestly produces `n_overlap_queries=0`. Cropping or padding the same PNG must
+not be used to manufacture adjacent-region overlap. Create a small, capped
+range-read ingest with overlapping COG windows instead.
 
 Bag-of-codes, mean-pooled frozen-DINO cosine, and sliding-window frozen-DINO
 grid cosine each report same-place Recall@1 and AUROC against all far-query /

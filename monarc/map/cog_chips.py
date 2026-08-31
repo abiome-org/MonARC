@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 import numpy as np
 from PIL import Image
 
-from monarc.common.coordinates import AoiBox, geodetic_to_enu, geodetic_to_utm
+from monarc.common.coordinates import AoiBox, geodetic_to_enu, geodetic_to_utm, meters_per_degree
 from monarc.data.pc_sas import apply_sas_token, is_azure_blob_href, token_expired, unsigned_href
 
 JsonObj = dict[str, Any]
@@ -111,16 +111,32 @@ def plan_chip_windows(
     size_px: int = DEFAULT_CHIP_SIZE_PX,
     grid: int = DEFAULT_CHIP_GRID,
     max_chips: int = DEFAULT_MAX_CHIPS,
+    overlap_frac: float = 0.0,
+    gsd_m: float = 0.3,
 ) -> list[JsonObj]:
     """Sample a regular grid of chip windows over the AOI. One vintage of items."""
     if size_px <= 0 or grid <= 0 or max_chips <= 0:
         raise ChipExtractError("chip size, grid, and max_chips must be positive")
+    if not 0.0 <= float(overlap_frac) < 1.0:
+        raise ChipExtractError("overlap_frac must be in [0, 1)")
+    if not np.isfinite(gsd_m) or float(gsd_m) <= 0.0:
+        raise ChipExtractError("gsd_m must be positive")
     windows: list[JsonObj] = []
-    n = int(grid)
-    for i in range(n):
-        lat = aoi.south + (aoi.north - aoi.south) * (i + 0.5) / n
-        for j in range(n):
-            lon = aoi.west + (aoi.east - aoi.west) * (j + 0.5) / n
+    chip_size_m = float(size_px) * float(gsd_m)
+    stride_m = chip_size_m * (1.0 - float(overlap_frac))
+    if overlap_frac > 0.0:
+        m_lat, m_lon = meters_per_degree(aoi.center_lat)
+        lat_step, lon_step = stride_m / m_lat, stride_m / m_lon
+        latitudes = np.arange(aoi.south + 0.5 * chip_size_m / m_lat,
+                              aoi.north, lat_step)
+        longitudes = np.arange(aoi.west + 0.5 * chip_size_m / m_lon,
+                               aoi.east, lon_step)
+    else:
+        n = int(grid)
+        latitudes = [aoi.south + (aoi.north - aoi.south) * (i + 0.5) / n for i in range(n)]
+        longitudes = [aoi.west + (aoi.east - aoi.west) * (j + 0.5) / n for j in range(n)]
+    for i, lat in enumerate(latitudes):
+        for j, lon in enumerate(longitudes):
             if not aoi.intersects([lon, lat, lon, lat]):
                 continue
             item = covering_item(items, lon, lat)
@@ -142,6 +158,9 @@ def plan_chip_windows(
                 "size_px": int(size_px),
                 "range_read": True,
                 "copy_full_geotiff": False,
+                "chip_size_m": chip_size_m,
+                "stride_m": stride_m,
+                "overlap_frac": float(overlap_frac),
             }
             rec.update(pix)
             windows.append(rec)
@@ -156,11 +175,18 @@ def chip_plan_block(
     size_px: int,
     grid: int,
     max_chips: int,
+    overlap_frac: float = 0.0,
+    gsd_m: float = 0.3,
 ) -> JsonObj:
+    chip_size_m = float(size_px) * float(gsd_m)
     return {
         "size_px": int(size_px),
         "grid": int(grid),
         "max_chips": int(max_chips),
+        "gsd_m": float(gsd_m),
+        "chip_size_m": chip_size_m,
+        "stride_m": chip_size_m * (1.0 - float(overlap_frac)),
+        "overlap_frac": float(overlap_frac),
         "n_windows": len(windows),
         "range_read": True,
         "copy_full_geotiff": False,
@@ -274,6 +300,10 @@ def materialize_chip_windows(
         "r2_rasters": False,
         "format": "png",
     }
+    if windows:
+        for key in ("overlap_frac", "stride_m", "chip_size_m"):
+            if key in windows[0]:
+                meta[key] = windows[0][key]
     (out / "chips_meta.json").write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
     return meta
 
