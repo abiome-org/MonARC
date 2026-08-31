@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 
+from monarc.common.se3 import invert_se3
 from monarc.localization.dpnp import PnPResult, solve_pnp_lm
 from monarc.localization.eval_retrieve import (
     _bag_rankings,
@@ -135,7 +136,8 @@ def evaluate_match_pnp(
     gallery_ids = [ids[int(i)] for i in gallery_idx]
     hits = {1: 0, 5: 0}
     rank1_errors: list[float] = []
-    refined_errors: list[float] = []
+    matcher_errors: list[float] = []
+    pnp_errors: list[float] = []
     queries: list[dict[str, Any]] = []
 
     for qi_raw, ranked in zip(query_idx.tolist(), rankings, strict=True):
@@ -190,8 +192,8 @@ def evaluate_match_pnp(
             best = None
             refined_xyz = rank1_xyz.copy()
             match_inliers = 0
-        refined_error = chip_distance(xyz[qi], refined_xyz, use_3d=False)
-        refined_errors.append(refined_error)
+        matcher_error = chip_distance(xyz[qi], refined_xyz, use_3d=False)
+        matcher_errors.append(matcher_error)
 
         if all_uv:
             corr = Correspondences(all_uv, all_xyz, all_codes, all_qidx)
@@ -212,6 +214,22 @@ def evaluate_match_pnp(
             pnp = solve_pnp_lm(corr_finite, K) if len(corr_finite) else _failed_pnp(0)
         else:
             pnp = _failed_pnp(0)
+        pnp_xy = invert_se3(pnp.T_cw)[:2, 3] if pnp.success else None
+        if pnp_xy is not None and np.isfinite(pnp_xy).all():
+            reported_xy = pnp_xy
+            reported_error = chip_distance(
+                xyz[qi], np.array([pnp_xy[0], pnp_xy[1], xyz[qi, 2]]), use_3d=False
+            )
+            pnp_errors.append(reported_error)
+            xy_estimate_kind = "pnp-horizontal"
+        else:
+            pnp = PnPResult(
+                pnp.T_cw, pnp.inliers, pnp.reproj_rmse, False, pnp.n_correspondences
+            )
+            pnp_xy = None
+            reported_xy = refined_xyz[:2]
+            reported_error = matcher_error
+            xy_estimate_kind = "matched-chip-center-horizontal-fallback"
         queries.append(
             {
                 "query_id": ids[qi],
@@ -221,12 +239,15 @@ def evaluate_match_pnp(
                 "rank1_xy_error_m": rank1_error,
                 "candidate_matches": candidate_rows,
                 "match_inlier_count": match_inliers,
-                "refined_xy_m": refined_xyz[:2].tolist(),
-                "xy_error_m": refined_error,
+                "matcher_xy_m": refined_xyz[:2].tolist(),
+                "matcher_xy_error_m": matcher_error,
+                "pnp_xy_m": pnp_xy.tolist() if pnp_xy is not None else None,
+                "refined_xy_m": reported_xy.tolist(),
+                "xy_error_m": reported_error,
                 "pnp_success": bool(pnp.success),
                 "pnp_inlier_count": int(pnp.inliers.size),
                 "pose_T_cw": pnp.T_cw.tolist() if pnp.success else None,
-                "xy_estimate_kind": "matched-chip-center-horizontal-fallback",
+                "xy_estimate_kind": xy_estimate_kind,
             }
         )
 
@@ -256,8 +277,11 @@ def evaluate_match_pnp(
         "aggregate": {
             "rank1_median_xy_error_m": percentile(rank1_errors, 50),
             "rank1_p90_xy_error_m": percentile(rank1_errors, 90),
-            "matcher_median_xy_error_m": percentile(refined_errors, 50),
-            "matcher_p90_xy_error_m": percentile(refined_errors, 90),
+            "matcher_median_xy_error_m": percentile(matcher_errors, 50),
+            "matcher_p90_xy_error_m": percentile(matcher_errors, 90),
+            "pnp_median_xy_error_m": percentile(pnp_errors, 50) if pnp_errors else None,
+            "pnp_p90_xy_error_m": percentile(pnp_errors, 90) if pnp_errors else None,
+            "n_pnp_success": len(pnp_errors),
         },
         "split": {
             "kind": split["kind"],
@@ -277,7 +301,8 @@ def evaluate_match_pnp(
         "not": ["university1652", "gps-denied-flight-ate", "per-patch-metric-xyz"],
         "note": (
             "Results are for this local cache and spatial split only. Patch ties use coarse "
-            "chip-center xyz; NaN DSM z is excluded from PnP and xy remains a horizontal fallback."
+            "chip-center xyz, including possibly sampled 3DEP z, not per-patch DSM. Non-finite "
+            "ties are excluded from PnP; matched chip-center xy is the failure fallback."
         ),
     }
 

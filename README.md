@@ -198,7 +198,7 @@ python -m monarc.cli eval-retrieve \
 
 `--extract` and `--fsq` are local directories from `monarc extract` / `monarc train-fsq` (for example a stopped Runpod volume). No AWS. Public-UAV remains `bench-uav`.
 
-The separate matcher path retrieves a small candidate set, matches DINO patch grids only inside those candidates, and attempts the existing PnP/LM solver. Current extract+FSQ xyz is one coarse coordinate per chip, not per patch, and DSM z may be NaN. The report flags that limitation and always provides a horizontal matched-chip-center fallback when PnP is underconstrained.
+The separate matcher path retrieves a small candidate set, matches DINO patch grids only inside those candidates, and attempts the existing PnP/LM solver. When the solver succeeds, reported xy is the camera-in-world horizontal ENU translation obtained by inverting its world-to-camera pose; `xy_estimate_kind="pnp-horizontal"` identifies it. The matched candidate chip center is used only when PnP fails, with kind `matched-chip-center-horizontal-fallback`. Current extract+FSQ xyz is one coarse coordinate per chip, including possibly sampled 3DEP Z, not per-patch DSM, and DSM z may be NaN. Separate matcher, PnP, and rank-1 errors preserve that limitation and make the estimates comparable.
 
 Fill chip-center Z on an existing cache before evaluation with public 3DEP point samples:
 
