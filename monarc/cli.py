@@ -91,6 +91,8 @@ def _cmd_ingest_aoi(args: argparse.Namespace) -> int:
         chip_size=args.chip_size,
         chip_grid=args.chip_grid,
         max_chips=args.max_chips,
+        overlap_frac=args.overlap_frac,
+        gsd_m=args.gsd_m,
         materialize_only=args.materialize_only,
     )
     sys.stdout.write(str(path) + "\n")
@@ -121,6 +123,7 @@ def _cmd_eval_place_score(args: argparse.Namespace) -> int:
         query_kind=args.query_kind, chips_dir=args.chips, fsq_ckpt=args.fsq_ckpt,
         backbone_mode=args.backbone, weights_path=args.weights, device=args.device,
         allow_download=args.allow_download, max_crop_queries=args.max_crop_queries,
+        max_overlap_queries=args.max_overlap_queries,
     )
     json.dump(report, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
@@ -302,6 +305,10 @@ def build_parser() -> argparse.ArgumentParser:
     aoi.add_argument("--chip-size", type=int, default=224)
     aoi.add_argument("--chip-grid", type=int, default=8, help="Sample grid along each AOI axis")
     aoi.add_argument("--max-chips", type=int, default=64)
+    aoi.add_argument("--overlap-frac", type=float, default=0.0,
+                     help="Fractional chip overlap; 0 keeps the legacy --chip-grid plan")
+    aoi.add_argument("--gsd-m", type=float, default=0.3,
+                     help="Ground sample distance used for overlap stride planning")
     aoi.add_argument(
         "--materialize-only",
         action="store_true",
@@ -353,16 +360,17 @@ def build_parser() -> argparse.ArgumentParser:
                           help="Far spatial-box axis only")
     place_ev.add_argument("--crop-margin", type=int, default=2, help="Crop margin in DINO patches")
     place_ev.add_argument("--top-k", type=int, default=5)
-    place_ev.add_argument("--query-kind", choices=["stored-grid-crop", "reencoded-crop"],
+    place_ev.add_argument("--query-kind", choices=["stored-grid-crop", "reencoded-crop", "reencoded-overlap"],
                           default="stored-grid-crop")
     place_ev.add_argument("--chips", type=Path,
-                          help="Chip PNG directory (required for reencoded-crop)")
+                          help="Chip PNG directory (required for reencoded query kinds)")
     place_ev.add_argument("--fsq-ckpt", type=Path,
                           help="Stage-1 checkpoint (default: <fsq>/stage1_last.pt)")
     place_ev.add_argument("--backbone", choices=["vitb14", "stub"], default="vitb14")
     place_ev.add_argument("--weights", type=Path, help="Optional local DINO weights")
     place_ev.add_argument("--device", default="cpu")
     place_ev.add_argument("--max-crop-queries", type=int)
+    place_ev.add_argument("--max-overlap-queries", type=int)
     place_ev.add_argument("--allow-download", action="store_true",
                           help="Permit model download (disabled by default)")
     place_ev.set_defaults(func=_cmd_eval_place_score)

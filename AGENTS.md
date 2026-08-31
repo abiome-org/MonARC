@@ -91,7 +91,7 @@ MonARC/
 |   +-- localization/           # Subsystem 3: Where-am-I estimation head
 |   |   +-- global_retrieve.py  # Lost-in-space bag-of-codes / frozen-DINO chip retrieve
 |   |   +-- eval_retrieve.py    # Colorado-track bag-of-codes + frozen-DINO retrieve on spatial chip holdout
-|   |   +-- eval_place_score.py # CPU same-place stored-grid or PNG-reencoded crop verification
+|   |   +-- eval_place_score.py # CPU stored-grid, reencoded-crop, and neighbor-overlap place verification
 |   |   +-- eval_match_pnp.py   # Top-K local DINO-grid matches + PnP/LM with chip-center xy fallback
 |   |   +-- dpnp.py             # Differentiable PnP particle initializer
 |   |   +-- perceiver.py        # Set transformer for correspondence-to-pose cross-attention

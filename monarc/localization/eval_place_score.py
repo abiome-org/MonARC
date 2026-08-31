@@ -160,6 +160,80 @@ def _reencode_crop_queries(
     }
 
 
+def _nearest_overlap_pairs(
+    gallery: np.ndarray, positions: np.ndarray, radius_m: float
+) -> tuple[list[tuple[int, int]], list[float]]:
+    pairs: list[tuple[int, int]] = []
+    spacings: list[float] = []
+    for qi_raw in gallery.tolist():
+        qi = int(qi_raw)
+        candidates = gallery[gallery != qi]
+        if candidates.size:
+            distances = np.linalg.norm(positions[candidates, :2] - positions[qi, :2], axis=1)
+            nearest = int(np.argmin(distances))
+            distance = float(distances[nearest])
+            spacings.append(distance)
+            if distance <= radius_m:
+                pairs.append((qi, int(candidates[nearest])))
+    return pairs, spacings
+
+
+def _reencode_overlap_queries(
+    chips_dir: str | Path,
+    ids: list[str],
+    pairs: list[tuple[int, int]],
+    fsq_ckpt: str | Path,
+    *,
+    size_px: int,
+    backbone_mode: str,
+    weights_path: str | Path | None,
+    device: str,
+    allow_download: bool,
+    max_overlap_queries: int | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Encode full source PNGs whose distinct neighbor is the positive gallery chip."""
+    if max_overlap_queries is not None and max_overlap_queries < 0:
+        raise ValueError("max_overlap_queries must be non-negative")
+    selected = pairs[:max_overlap_queries] if max_overlap_queries is not None else pairs
+    backbone = load_frozen_dino(mode=backbone_mode, weights_path=weights_path,
+                                allow_download=allow_download, device=device)
+    backbone.eval()
+    payload = torch.load(fsq_ckpt, map_location="cpu", weights_only=True)
+    _, stem, mix, head = default_stage1_modules(levels=payload.get("levels", DEFAULT_FSQ_LEVELS))
+    for key, module in (("fusion_stem", stem), ("channel_fusion", mix), ("fsq_head", head)):
+        if key in payload:
+            module.load_state_dict(payload[key])
+    root = Path(chips_dir)
+    queries: list[dict[str, Any]] = []
+    for source, true_i in selected:
+        chip = root / ids[source]
+        if not chip.is_file():
+            raise FileNotFoundError(f"chip for extract id {ids[source]!r} not found in {root}")
+        with Image.open(chip) as image:
+            rgb = image.convert("RGB")
+            if rgb.size != (size_px, size_px):
+                raise ValueError(f"chip {chip} is {rgb.size}, expected {(size_px, size_px)}")
+            array = np.asarray(rgb, dtype=np.float32) / 255.0
+        tensor = torch.from_numpy(array).permute(2, 0, 1).unsqueeze(0).contiguous().to(device)
+        with torch.no_grad():
+            feature = backbone(tensor).detach().cpu()
+        _fused, codes = encode_from_features(stem, mix, head, feature, device=device)
+        queries.append({"kind": "spatial-overlap", "query_kind": "reencoded-overlap",
+                        "source": source, "true": true_i, "codes": codes[0].numpy(),
+                        "features": feature[0].numpy()})
+    meta: dict[str, Any] = {
+        "chips_dir": str(root), "backbone_mode": backbone.mode,
+        "backbone_source": backbone.source, "fsq_ckpt": str(Path(fsq_ckpt)),
+        "size_px": int(size_px), "n_reencoded": len(queries),
+    }
+    chips_meta = root / "chips_meta.json"
+    if chips_meta.is_file():
+        stored = json.loads(chips_meta.read_text())
+        if "overlap_frac" in stored:
+            meta["overlap_frac"] = float(stored["overlap_frac"])
+    return queries, meta
+
+
 def _mode_score(mode: str, query_codes: np.ndarray, query_features: np.ndarray,
                 gallery_codes: np.ndarray, gallery_features: np.ndarray,
                 codebook_size: int) -> float:
@@ -209,7 +283,7 @@ def evaluate_place_score(
     overlap_radius_m = chip_size_m
     h, w = code_grids.shape[1:]
 
-    if query_kind not in {"stored-grid-crop", "reencoded-crop"}:
+    if query_kind not in {"stored-grid-crop", "reencoded-crop", "reencoded-overlap"}:
         raise ValueError(f"unknown query_kind {query_kind!r}")
     queries: list[dict[str, Any]] = list(crop_queries or [])
     if query_kind == "stored-grid-crop":
@@ -222,19 +296,12 @@ def evaluate_place_score(
 
     # Each gallery chip gets at most one distinct, nearest overlap target. Self is
     # deliberately excluded: crop-of-self already measures that controlled case.
-    overlap_pairs: list[tuple[int, int]] = []
-    for qi_raw in gallery.tolist():
-        qi = int(qi_raw)
-        candidates = gallery[gallery != qi]
-        if candidates.size:
-            distances = np.linalg.norm(positions[candidates, :2] - positions[qi, :2], axis=1)
-            nearest = int(np.argmin(distances))
-            if float(distances[nearest]) <= overlap_radius_m:
-                overlap_pairs.append((qi, int(candidates[nearest])))
-    for qi, true_i in overlap_pairs:
-        queries.append({"kind": "spatial-overlap", "query_kind": "stored-full-chip",
-                        "source": qi, "true": true_i,
-                        "codes": code_grids[qi], "features": feature_grids[qi]})
+    overlap_pairs, neighbor_spacings = _nearest_overlap_pairs(gallery, positions, overlap_radius_m)
+    if query_kind == "stored-grid-crop":
+        for qi, true_i in overlap_pairs:
+            queries.append({"kind": "spatial-overlap", "query_kind": "stored-full-chip",
+                            "source": qi, "true": true_i,
+                            "codes": code_grids[qi], "features": feature_grids[qi]})
 
     modes: dict[str, Any] = {}
     mode_names = (BAG_OF_CODES_DESCRIPTOR, DINO_POOLED_DESCRIPTOR, DINO_GRID_DESCRIPTOR)
@@ -304,7 +371,8 @@ def evaluate_place_score(
     )
     return {
         "track": "colorado-place-verification",
-        "protocol": "same-place overlap / crop-jitter",
+        "protocol": ("same-place overlap (reencoded neighbor)" if query_kind == "reencoded-overlap"
+                     else "same-place overlap / crop-jitter"),
         "query_kind": query_kind,
         "not": ["university1652", "ortholoc", "colorado-flight-ate", "hunter", "vla"],
         "network": False,
@@ -312,7 +380,10 @@ def evaluate_place_score(
         "auroc": headline["auroc"],
         "recall_at_1_same_place": headline["recall_at_1_same_place"],
         "n_crop_queries": sum(q["kind"] == "crop-jitter" for q in queries),
-        "n_overlap_queries": len(overlap_pairs),
+        "n_overlap_queries": sum(q["kind"] == "spatial-overlap" for q in queries),
+        "n_overlap_pairs": len(overlap_pairs),
+        "median_neighbor_spacing_m": (float(np.median(neighbor_spacings))
+                                      if neighbor_spacings else None),
         "n_far_queries": int(far.size),
         "n_gallery": int(gallery.size),
         "chip_size_m": chip_size_m,
@@ -344,7 +415,8 @@ def evaluate_place_score_dirs(extract_dir: str | Path, fsq_dir: str | Path, *,
                               backbone_mode: str = "vitb14",
                               weights_path: str | Path | None = None,
                               device: str = "cpu", allow_download: bool = False,
-                              max_crop_queries: int | None = None) -> dict[str, Any]:
+                              max_crop_queries: int | None = None,
+                              max_overlap_queries: int | None = None) -> dict[str, Any]:
     payload = load_retrieve_inputs(extract_dir, fsq_dir)
     # load_retrieve_inputs intentionally flattens code grids for legacy chip
     # retrieval; place verification needs their stored spatial layout.
@@ -363,6 +435,18 @@ def evaluate_place_score_dirs(extract_dir: str | Path, fsq_dir: str | Path, *,
             size_px=size_px, patch_size=patch_size, crop_margin=crop_margin,
             backbone_mode=backbone_mode, weights_path=weights_path, device=device,
             allow_download=allow_download, max_crop_queries=max_crop_queries,
+        )
+    elif query_kind == "reencoded-overlap":
+        if chips_dir is None:
+            raise ValueError("chips_dir is required for reencoded-overlap")
+        checkpoint = Path(fsq_ckpt) if fsq_ckpt is not None else Path(fsq_dir) / "stage1_last.pt"
+        split = spatial_holdout_indices(payload["xyz"], query_fraction=query_fraction, axis=axis)
+        radius_m = float(size_px) * float(gsd_m)
+        pairs, _ = _nearest_overlap_pairs(split["gallery_idx"], payload["xyz"], radius_m)
+        crop_queries, reencode_meta = _reencode_overlap_queries(
+            chips_dir, payload["ids"], pairs, checkpoint, size_px=size_px,
+            backbone_mode=backbone_mode, weights_path=weights_path, device=device,
+            allow_download=allow_download, max_overlap_queries=max_overlap_queries,
         )
     report = evaluate_place_score(spatial_codes, payload["features"], payload["xyz"],
                                   codebook_size=payload["codebook_size"], ids=payload["ids"],

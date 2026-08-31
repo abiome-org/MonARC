@@ -9,6 +9,8 @@ from PIL import Image
 from monarc.cli import main
 from monarc.localization.eval_place_score import (
     _reencode_crop_queries,
+    _reencode_overlap_queries,
+    _nearest_overlap_pairs,
     evaluate_place_score_dirs,
     write_place_score_fixture,
 )
@@ -57,6 +59,37 @@ def _write_reencoded_fixture(tmp_path, *, copy_far=False):
         **json.loads((extract / "meta.json").read_text()),
         "codebook_size": int(np.max(np.load(extract / "codes.npy"))) + 1,
     }) + "\n")
+    return chips, extract, checkpoint, weights
+
+
+def _write_overlap_fixture(tmp_path, *, spacing_m=21.0, copy_far=False):
+    chips, extract = tmp_path / "chips", tmp_path / "extract"
+    chips.mkdir()
+    size, stride = 84, 42
+    rng = np.random.default_rng(29)
+    tile = rng.integers(0, 256, size=(size + stride, size + 3 * stride, 3), dtype=np.uint8)
+    # A repeated strip makes adjacent gallery crops independently read the same
+    # patterned place, while the held-out final strip remains different.
+    repeated = rng.integers(0, 256, size=(size + stride, stride, 3), dtype=np.uint8)
+    tile[:, :4 * stride] = np.tile(repeated, (1, 4, 1))
+    for i in range(8):
+        row, col = divmod(i, 4)
+        image = tile[row * stride:row * stride + size, col * stride:col * stride + size].copy()
+        if copy_far and i in (3, 7):
+            image = tile[:size, :size].copy()
+        name = f"chip_{i:04d}.png"
+        Image.fromarray(image, "RGB").save(chips / name)
+        (chips / f"chip_{i:04d}.xyz.json").write_text(
+            json.dumps({"xyz": [float(col * spacing_m), float(row * 35.0), 80.0]}) + "\n")
+    (chips / "chips_meta.json").write_text(json.dumps({"overlap_frac": 0.5}) + "\n")
+    torch.manual_seed(17)
+    _, stem, mix, head = default_stage1_modules()
+    checkpoint, weights = tmp_path / "stage1_last.pt", tmp_path / "stub_weights.pt"
+    torch.save(stage1_checkpoint(stem, mix, head, step=0), checkpoint)
+    backbone = FrozenDinoBackbone(mode="stub")
+    torch.save(backbone.encoder.state_dict(), weights)
+    extract_chips(chips, extract, size=size, backbone=backbone, device="cpu", fsq_ckpt=checkpoint)
+    (extract / "stage1_last.pt").write_bytes(checkpoint.read_bytes())
     return chips, extract, checkpoint, weights
 
 
@@ -141,6 +174,63 @@ def test_reencoded_far_copies_do_not_invent_perfect_auc(tmp_path):
     )
     assert report["modes"][DINO_POOLED_DESCRIPTOR]["auroc"] < 1.0
     assert report["modes"][DINO_GRID_DESCRIPTOR]["auroc"] < 1.0
+
+
+def test_reencoded_overlap_cli_uses_neighbor_pngs_and_limit(tmp_path, capsys):
+    chips, extract, checkpoint, weights = _write_overlap_fixture(tmp_path)
+    out = tmp_path / "overlap.json"
+    assert main(["eval-place-score", "--extract", str(extract), "--fsq", str(extract),
+                 "--out", str(out), "--axis", "east", "--gsd-m", "0.5",
+                 "--query-kind", "reencoded-overlap", "--chips", str(chips),
+                 "--fsq-ckpt", str(checkpoint), "--backbone", "stub",
+                 "--weights", str(weights), "--max-overlap-queries", "1"]) == 0
+    capsys.readouterr()
+    saved = json.loads(out.read_text())
+    assert saved["query_kind"] == "reencoded-overlap"
+    assert saved["protocol"] == "same-place overlap (reencoded neighbor)"
+    assert saved["n_overlap_queries"] == saved["n_reencoded"] == 1
+    assert saved["n_crop_queries"] == 0
+    assert saved["n_overlap_pairs"] >= saved["n_overlap_queries"] > 0
+    assert saved["median_neighbor_spacing_m"] < saved["chip_size_m"]
+    assert saved["overlap_frac"] == 0.5
+    assert saved["network"] is False
+    assert saved["backbone_mode"] == "stub"
+    assert saved["backbone_source"]
+    assert saved["fsq_ckpt"] == str(checkpoint)
+    assert saved["not"] == ["university1652", "ortholoc", "colorado-flight-ate", "hunter", "vla"]
+    assert saved["modes"][DINO_GRID_DESCRIPTOR]["auroc"] >= 0.5
+    assert saved["modes"][DINO_GRID_DESCRIPTOR]["recall_at_1_same_place"] >= 0.5
+
+    ids = json.loads((extract / "ids.json").read_text())
+    xyz = np.load(extract / "xyz.npy")
+    split_gallery = np.array([0, 1, 2, 4, 5, 6])
+    pairs, _ = _nearest_overlap_pairs(split_gallery, xyz, 42.0)
+    queries, _ = _reencode_overlap_queries(
+        chips, ids, pairs, checkpoint, size_px=84, backbone_mode="stub",
+        weights_path=weights, device="cpu", allow_download=False, max_overlap_queries=1)
+    assert not np.shares_memory(queries[0]["features"], np.load(extract / "features.npy"))
+    assert queries[0]["true"] != queries[0]["source"]
+
+
+def test_reencoded_overlap_honestly_reports_zero_on_coarse_grid(tmp_path):
+    chips, extract, checkpoint, weights = _write_reencoded_fixture(tmp_path)
+    report = evaluate_place_score_dirs(
+        extract, extract, axis="east", gsd_m=0.3, query_kind="reencoded-overlap",
+        chips_dir=chips, fsq_ckpt=checkpoint, backbone_mode="stub",
+        weights_path=weights, device="cpu")
+    assert report["n_overlap_queries"] == report["n_overlap_pairs"] == 0
+    assert report["n_crop_queries"] == 0
+    assert report["auroc"] is None
+
+
+def test_reencoded_overlap_far_copies_do_not_invent_perfect_auc(tmp_path):
+    chips, extract, checkpoint, weights = _write_overlap_fixture(tmp_path, copy_far=True)
+    report = evaluate_place_score_dirs(
+        extract, extract, axis="east", gsd_m=0.5, query_kind="reencoded-overlap",
+        chips_dir=chips, fsq_ckpt=checkpoint, backbone_mode="stub",
+        weights_path=weights, device="cpu")
+    assert report["n_overlap_queries"] > 0
+    assert report["modes"][DINO_POOLED_DESCRIPTOR]["auroc"] < 1.0
 
 
 def test_no_rehearsal_run_numbers_are_embedded():
