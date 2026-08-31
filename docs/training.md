@@ -77,18 +77,26 @@ Let \( \mathbf{I}_{\mathrm{rgb}} \in \mathbb{R}^{B \times 3 \times H \times W} \
    \]
 
 ### 2.2 Loss Formulation for Stage 1
-Stage 1 is optimized using a dual-objective loss:
+Stage 1 is optimized with reconstruction, a weak spatial smoother, and an FSQ usage term. Usage is required: reconstruction of frozen DINO tokens from a few FSQ scalars plus spatial smoothness is minimized by a handful of reconstruction templates (`unique_codes: 4` on 128 real chips; `unique_codes: 1` on synthetic noise). That is codebook collapse, not a Colorado map.
+
+Default `train-fsq` levels are \( L = (8, 5, 5, 5) \) (\( K = 1000 \)). DINOv2 stays frozen. The quantizer remains FSQ (no VQ-VAE embedding).
+
 \[
-\mathcal{L}_{\mathrm{Stage1}} = \mathcal{L}_{\mathrm{recon}} + \lambda_{\mathrm{smooth}} \mathcal{L}_{\mathrm{spatial}}
+\mathcal{L}_{\mathrm{Stage1}} = \mathcal{L}_{\mathrm{recon}} + \lambda_{\mathrm{smooth}} \mathcal{L}_{\mathrm{spatial}} + \lambda_{\mathrm{usage}} \mathcal{L}_{\mathrm{usage}}
 \]
-- **Reconstruction Loss**: Reconstructing multi-scale patch appearance and geometric normals from quantized codes:
+- **Reconstruction Loss**: Reconstructing frozen DINO tokens from quantized scalars (optional DSM gradient term when that decoder is present):
   \[
-  \mathcal{L}_{\mathrm{recon}} = \|\mathbf{f}_{\mathrm{rgb}} - \mathrm{Decoder}_{\theta_{\mathrm{dec}}}(\hat{\mathbf{z}})\|_2^2 + \|\nabla \mathbf{D} - \mathrm{NormDecoder}_{\theta_{\mathrm{norm}}}(\hat{\mathbf{z}})\|_2^2
+  \mathcal{L}_{\mathrm{recon}} = \|\mathbf{f}_{\mathrm{rgb}} - \mathrm{Decoder}_{\theta_{\mathrm{dec}}}(\hat{\mathbf{z}})\|_2^2
   \]
-- **Spatial Smoothness Regularizer**: Prevents high-frequency checkerboard quantization artifacts across adjacent spatial patches:
+- **Spatial Smoothness Regularizer**: Dampens high-frequency checkerboard quantization artifacts across adjacent spatial patches (\( \lambda_{\mathrm{smooth}} \) is kept small so it cannot erase code diversity):
   \[
   \mathcal{L}_{\mathrm{spatial}} = \sum_{i,j} \|\hat{\mathbf{z}}_{i+1,j} - \hat{\mathbf{z}}_{i,j}\|_2^2 + \|\hat{\mathbf{z}}_{i,j+1} - \hat{\mathbf{z}}_{i,j}\|_2^2
   \]
+- **FSQ usage**: Soft occupancy \( \bar{p} \) over the \( K \) codes is the batch-mean of the product of per-dimension softmax assignments to FSQ bins. Off-diagonal covariance of the pre-quant projection is penalized so dimensions do not collapse onto a 1-D curve in code space:
+  \[
+  \mathcal{L}_{\mathrm{usage}} = 1 - \frac{H(\bar{p})}{\log K} + \lambda_{\mathrm{cov}} \|\mathrm{offdiag}(\mathrm{Corr}(z))\|_F^2
+  \]
+  A CPU test treats \( \mathrm{unique} < \lceil 0.25 \min(n_{\mathrm{chips}}, K, n_{\mathrm{tokens}}) \rceil \) as collapse (the 4/128 Golden–Morrison rehearsal case fails this floor).
 
 Query field \( \Phi_{\mathrm{map}} \) used in Stage 2 is the **Colorado** representation: interpolated from FSQ codes / a working-set grid, not a continental dense store.
 

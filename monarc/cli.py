@@ -69,6 +69,9 @@ def _cmd_train_fsq(args: argparse.Namespace) -> int:
         keep_last=args.keep_last,
         resume=args.resume,
         seed=args.seed,
+        levels=args.levels,
+        smooth_weight=args.smooth_weight,
+        usage_weight=args.usage_weight,
     )
     json.dump(report, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
@@ -185,6 +188,13 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--keep-last", type=int, default=3)
     train.add_argument("--resume", type=Path, default=None)
     train.add_argument("--seed", type=int, default=0)
+    train.add_argument(
+        "--levels",
+        default="8,5,5,5",
+        help="FSQ levels, comma-separated (default Mentzer 10-bit 8,5,5,5)",
+    )
+    train.add_argument("--smooth-weight", type=float, default=0.05)
+    train.add_argument("--usage-weight", type=float, default=1.0)
     train.set_defaults(func=_cmd_train_fsq)
 
     aoi = sub.add_parser(

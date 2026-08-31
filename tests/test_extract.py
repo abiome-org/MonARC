@@ -57,6 +57,8 @@ def test_train_fsq_from_extract_checkpoints(tmp_path):
     )
     assert report["n_chips"] == 4
     assert report["has_dsm"] is True
+    assert report["collapsed"] is False
+    assert report["codebook_size"] == 1000
     assert (out / "codes.npy").exists()
     assert (out / "xyz.npy").exists()
     assert (out / "stage1_last.pt").exists()

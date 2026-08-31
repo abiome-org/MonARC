@@ -14,6 +14,7 @@ from monarc.localization.global_retrieve import CodeRetriever
 from monarc.localization.matcher import match_codes
 from monarc.localization.posterior import PosePosterior
 from monarc.map.metric_index import index_from_tokens
+from monarc.map.quantizer import DRY_RUN_FSQ_LEVELS
 from monarc.map.stage1 import default_stage1_modules, encode_fused, train_tiny_codebook
 
 
@@ -107,7 +108,7 @@ def run_dry_run(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     scene = make_synthetic_scene(seed=seed)
-    backbone, stem, mix, head = default_stage1_modules(levels=(5, 5, 5))
+    backbone, stem, mix, head = default_stage1_modules(levels=DRY_RUN_FSQ_LEVELS)
     train_stats = train_tiny_codebook(
         backbone,
         stem,

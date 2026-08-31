@@ -180,11 +180,14 @@ MonARC enforces the following ingestion pipeline. v1 inputs are the Colorado cli
 ```
 
 ### 2.4 Quantization via Finite Scalar Quantization (FSQ)
-Standard Vector Quantization (VQ-VAE) suffers from codebook collapse and requires delicate codebook reset heuristics. MonARC adopts Finite Scalar Quantization (FSQ; Mentzer et al., 2023). FSQ bounds each feature dimension to a discrete set of levels \( L = (l_1, l_2, \dots, l_d) \), yielding a fixed codebook of size \( K = \prod_{i=1}^d l_i \):
+Standard Vector Quantization (VQ-VAE) suffers from codebook collapse and requires delicate codebook reset heuristics. MonARC adopts Finite Scalar Quantization (FSQ; Mentzer et al., 2023). FSQ bounds each feature dimension to a discrete set of levels \( L = (l_1, l_2, \dots, l_d) \), yielding a fixed codebook of size \( K = \prod_{i=1}^d l_i \). There is no learned embedding table.
+
+v1 Stage-1 / `train-fsq` default is Mentzer et al. 10-bit \( L = (8, 5, 5, 5) \), \( K = 1000 \). The CPU dry-run may use a smaller \( L = (5, 5, 5) \) (\( K = 125 \)) for synthetic chips only. Even \( l_i \) use the paper offset so all \( l_i \) bins are reachable. A reconstruction-only objective can still collapse the projection onto a handful of joint codes (observed: `unique_codes: 4` on 128 Golden–Morrison chips with \( L = (5, 5, 5) \)); Stage 1 therefore includes a differentiable usage term on soft code occupancy (see [`docs/training.md`](./training.md) §2.2). Unique-code counts that are tiny relative to \( \min(n_{\mathrm{chips}}, K) \) are treated as collapse, not as a map.
+
 \[
-\hat{z}_i = \mathrm{round}\left( \left( \frac{l_i - 1}{2} \right) \tanh(z_i) \right) \cdot \frac{2}{l_i - 1}
+\hat{z}_i = \mathrm{round}\bigl( (l_i-1)/2 \cdot \tanh(z_i + s_i) - o_i \bigr)
 \]
-Quantization operates without learned codebook vectors, eliminating codebook dead-zones and ensuring deterministic mapping between continuous features and integer indices.
+with \( o_i = 0 \) for odd \( l_i \) and \( o_i = 1/2 \) for even \( l_i \), \( s_i = \tan(o_i / \mathrm{half}\text{-}l_i) \).
 
 ---
 
@@ -404,7 +407,7 @@ DSM [B, 1, H, W] + vectors [B, 4, H, W]
     -> f_geo [B, 128, H/14, W/14]
 
 concat(f_rgb, f_geo) -> ChannelFusion -> f_fused [B, 256, H/14, W/14]
-    -> FSQHead (levels L, K = prod(L); no VQ-VAE embedding)
+    -> FSQHead (default L=(8,5,5,5), K=1000; no VQ-VAE embedding)
     -> codes [B, H/14, W/14] integer, xyz [N, 3] ENU meters
 
 Lost-in-space retrieve: bag-of-codes (+ optional adjacent n-grams)

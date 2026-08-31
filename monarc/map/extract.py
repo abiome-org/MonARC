@@ -21,6 +21,7 @@ from monarc.map.dino_backbone import (
     load_frozen_dino,
 )
 from monarc.map.fusion_stem import DEFAULT_VECTOR_CHANNELS
+from monarc.map.quantizer import DEFAULT_FSQ_LEVELS
 from monarc.map.stage1 import default_stage1_modules, encode_from_features
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
@@ -227,7 +228,7 @@ def extract_chips(
         payload = torch.load(fsq_ckpt, map_location="cpu", weights_only=True)
         _, stem, mix, head = default_stage1_modules(
             vector_channels=vector_channels,
-            levels=payload.get("levels", (5, 5, 5)),
+            levels=payload.get("levels", DEFAULT_FSQ_LEVELS),
         )
         if "fusion_stem" in payload:
             stem.load_state_dict(payload["fusion_stem"])
