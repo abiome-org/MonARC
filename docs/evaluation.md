@@ -41,6 +41,16 @@ The Colorado retrieval track is executed by `monarc eval-retrieve --extract <dir
 
 This is map-side chip retrieval. It is not matcher+PnP pose, not University-1652, and not a Hunter policy eval. Do not paste numbers into this file; the executable report is the JSON from a named run. Compare bag-of-codes and DINO modes from that JSON; do not copy a prior run's Recall@K into the docs.
 
+### 1.3 Retrieved-candidate matcher + PnP script (`monarc eval-match-pnp`)
+
+`monarc eval-match-pnp --extract <dir> --fsq <dir>` preserves the same spatial-box split but measures a different grain. It first retrieves top-K gallery chips (K=5 by default), then performs mutual-nearest cosine matching between frozen DINO patch grids only inside those candidates. The retrieval descriptor defaults to bag-of-codes; frozen-DINO pooled or flattened-grid retrieval can be selected explicitly. Inputs remain local and the command performs no network access.
+
+Matched query patch uv and gallery xyz are passed through the existing correspondence and PnP/LM path. The present extract+FSQ contract supplies one coarse xyz per chip, so all patches from a candidate share its chip-center coordinate. This is not per-patch terrain geometry and is commonly degenerate for 6-DoF PnP. DSM z may also be NaN. The JSON therefore sets `xyz_kind="coarse-chip-center"`, `xyz_is_chip_center=true`, and `dsm_z_may_be_nan=true`. Non-finite-z ties are excluded from PnP rather than assigned an invented elevation.
+
+Each query records top-K ids, local match inlier count, refined horizontal xy, horizontal error against the query chip center, and whether PnP succeeded. When PnP is underconstrained or fails, refined xy is the locally selected inlier candidate's chip center. Aggregates report median/P90 horizontal error for rank-1 retrieval and matcher refinement. Retrieve Recall@1/5 is recomputed for the candidate stage on the same run. `split.tiny` is true when `n_chips < 128` or `n_query < 32`.
+
+This protocol is a map-cache diagnostic, not University-1652 and not GPS-denied flight ATE. Fixture comparisons are fixture results only; they neither establish nor refute performance on Golden–Morrison or statewide Colorado data. Report actual results only from a saved JSON artifact produced by the command.
+
 ---
 
 ## 2. Benchmark Evaluation Protocols
