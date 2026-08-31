@@ -140,6 +140,8 @@ def _cmd_fill_dsm_z(args: argparse.Namespace) -> int:
         chips_dir=args.chips,
         href=args.href,
         offline=args.offline,
+        patches=args.patches,
+        gsd_m=args.gsd_m,
     )
     json.dump(report, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
@@ -356,6 +358,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fill_z.add_argument(
         "--offline", action="store_true", help="Reject HTTP sources (use with local --href)"
+    )
+    fill_z.add_argument(
+        "--patches", action="store_true",
+        help="Also write patch_xyz.npy by sampling every DINO cell center",
+    )
+    fill_z.add_argument(
+        "--gsd-m", type=float, default=0.3,
+        help="Fallback chip ground sample distance (default: 0.3 m for NAIP rehearsal)",
     )
     fill_z.set_defaults(func=_cmd_fill_dsm_z)
 

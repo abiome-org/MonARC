@@ -64,6 +64,20 @@ def match_dino_grids(
     patch_size: float = 14.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Mutual-nearest patch matches, returned as query indices and cosines."""
+    query_idx, _gallery_idx, scores = _match_dino_grid_indices(
+        query_features, gallery_features, min_cosine=min_cosine, patch_size=patch_size
+    )
+    return query_idx, scores
+
+
+def _match_dino_grid_indices(
+    query_features: np.ndarray,
+    gallery_features: np.ndarray,
+    *,
+    min_cosine: float,
+    patch_size: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Mutual-nearest query/gallery token indices and their cosine scores."""
     query, qh, qw = _feature_grid(query_features)
     gallery, _gh, _gw = _feature_grid(gallery_features)
     similarity = query @ gallery.T
@@ -76,7 +90,7 @@ def match_dino_grids(
     kept = q_idx[keep]
     # Compute uv here so shape/patch geometry is validated alongside matching.
     _patch_uv(qh, qw, patch_size)[kept]
-    return kept, scores[keep]
+    return kept, q_to_g[keep].astype(np.int64), scores[keep]
 
 
 def _rankings(
@@ -114,6 +128,7 @@ def evaluate_match_pnp(
     retrieve_mode: str = BAG_OF_CODES_DESCRIPTOR,
     min_cosine: float = 0.8,
     patch_size: float = 14.0,
+    patch_xyz: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Retrieve candidates, locally match DINO grids, then try PnP/LM."""
     codes = np.asarray(codes, dtype=np.int64)
@@ -122,6 +137,13 @@ def evaluate_match_pnp(
     n = int(xyz.shape[0])
     if codes.shape[0] != n or features.shape[0] != n:
         raise ValueError("codes, features, and xyz chip counts differ")
+    uses_patch_xyz = patch_xyz is not None
+    if uses_patch_xyz:
+        patch_xyz = np.asarray(patch_xyz, dtype=np.float64)
+        if features.ndim != 4 or patch_xyz.shape != (
+            n, features.shape[2], features.shape[3], 3
+        ):
+            raise ValueError("patch_xyz must match feature grid shape [N, H, W, 3]")
     if ids is None or len(ids) != n:
         ids = [f"chip-{i:04d}" for i in range(n)]
     split = spatial_holdout_indices(xyz, query_fraction=query_fraction, axis=axis)
@@ -154,6 +176,7 @@ def evaluate_match_pnp(
         rank1_errors.append(rank1_error)
 
         candidate_rows: list[dict[str, Any]] = []
+        candidate_ties: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         all_uv: list[np.ndarray] = []
         all_xyz: list[np.ndarray] = []
         all_codes: list[int] = []
@@ -162,7 +185,7 @@ def evaluate_match_pnp(
         uv_grid = _patch_uv(qh, qw, patch_size)
         for candidate_id in ranked_ids:
             gi = id_to_idx[candidate_id]
-            matched_q, scores = match_dino_grids(
+            matched_q, matched_g, scores = _match_dino_grid_indices(
                 features[qi], features[gi], min_cosine=min_cosine, patch_size=patch_size
             )
             candidate_rows.append(
@@ -172,9 +195,15 @@ def evaluate_match_pnp(
                     "mean_match_cosine": float(scores.mean()) if scores.size else None,
                 }
             )
+            if uses_patch_xyz:
+                assert patch_xyz is not None
+                candidate_ties[candidate_id] = (
+                    uv_grid[matched_q], patch_xyz[gi].reshape(-1, 3)[matched_g]
+                )
             for token_i in matched_q.tolist():
-                all_uv.append(uv_grid[int(token_i)])
-                all_xyz.append(xyz[gi])
+                if not uses_patch_xyz:
+                    all_uv.append(uv_grid[int(token_i)])
+                    all_xyz.append(xyz[gi])
                 all_codes.append(gi)
                 all_qidx.append(int(token_i))
 
@@ -188,6 +217,12 @@ def evaluate_match_pnp(
             )
             refined_xyz = xyz[id_to_idx[best["id"]]].copy()
             match_inliers = int(best["match_inlier_count"])
+            if uses_patch_xyz:
+                best_uv, best_xyz = candidate_ties[best["id"]]
+                all_uv = list(best_uv)
+                all_xyz = list(best_xyz)
+                all_codes = [id_to_idx[best["id"]]] * len(all_uv)
+                all_qidx = list(range(len(all_uv)))
         else:
             best = None
             refined_xyz = rank1_xyz.copy()
@@ -292,17 +327,21 @@ def evaluate_match_pnp(
             "tiny": bool(tiny_reasons),
             "tiny_reason": "; ".join(tiny_reasons) or None,
         },
-        "xyz_kind": "coarse-chip-center",
-        "xyz_is_chip_center": True,
+        "xyz_kind": "per-patch-3dep" if uses_patch_xyz else "coarse-chip-center",
+        "xyz_is_chip_center": not uses_patch_xyz,
         "dsm_z_may_be_nan": bool(np.isnan(xyz[:, 2]).any()),
         "network": False,
         "is_university1652": False,
         "is_gps_denied_flight_ate": False,
-        "not": ["university1652", "gps-denied-flight-ate", "per-patch-metric-xyz"],
+        "not": ["university1652", "gps-denied-flight-ate"] + (
+            [] if uses_patch_xyz else ["per-patch-metric-xyz"]
+        ),
         "note": (
-            "Results are for this local cache and spatial split only. Patch ties use coarse "
-            "chip-center xyz, including possibly sampled 3DEP z, not per-patch DSM. Non-finite "
-            "ties are excluded from PnP; matched chip-center xy is the failure fallback."
+            "Results are for this local cache and spatial split only. "
+            + ("PnP ties use per-patch 3DEP ENU xyz from the best locally matched candidate. "
+               if uses_patch_xyz else
+               "Patch ties use coarse chip-center xyz, including possibly sampled 3DEP z. ")
+            + "Non-finite ties are excluded from PnP; matched chip-center xy is the failure fallback."
         ),
     }
 
@@ -319,12 +358,15 @@ def evaluate_match_pnp_dirs(
     out: str | Path | None = None,
 ) -> dict[str, Any]:
     payload = load_retrieve_inputs(extract_dir, fsq_dir)
+    patch_xyz_path = Path(extract_dir) / "patch_xyz.npy"
+    patch_xyz = np.load(patch_xyz_path) if patch_xyz_path.is_file() else None
     patch_size = float(payload["extract_meta"].get("patch_size", 14))
     report = evaluate_match_pnp(
         payload["codes"], payload["features"], payload["xyz"],
         codebook_size=payload["codebook_size"], ids=payload["ids"],
         query_fraction=query_fraction, axis=axis, top_k=top_k,
         retrieve_mode=retrieve_mode, min_cosine=min_cosine, patch_size=patch_size,
+        patch_xyz=patch_xyz,
     )
     report.update(
         extract_dir=payload["extract_dir"], fsq_dir=payload["fsq_dir"],

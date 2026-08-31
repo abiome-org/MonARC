@@ -10,11 +10,12 @@ from urllib.parse import urlparse
 
 import numpy as np
 
-from monarc.common.coordinates import geodetic_to_enu
+from monarc.common.coordinates import geodetic_to_enu, meters_per_degree
 from monarc.data.pc_sas import apply_sas_token, is_azure_blob_href
 
 JsonObj = dict[str, Any]
 ElevationSampler = Callable[[str, float, float], float]
+BatchElevationSampler = Callable[[str, Sequence[float], Sequence[float]], np.ndarray]
 
 
 def sample_elevation(href: str, lon: float, lat: float) -> float:
@@ -48,6 +49,99 @@ def sample_elevation(href: str, lon: float, lat: float) -> float:
             return height
     except (OSError, StopIteration, ValueError):
         return float("nan")
+
+
+def sample_elevations(
+    href: str, lons: Sequence[float], lats: Sequence[float]
+) -> np.ndarray:
+    """Sample many WGS84 points while opening the source COG only once.
+
+    Compact clusters (one DINO chip) are window-read; sparse/large spans fall
+    back to ``dataset.sample``.
+    """
+    if len(lons) != len(lats):
+        raise ValueError("lat/lon sample counts differ")
+    result = np.full(len(lons), np.nan, dtype=np.float64)
+    if result.size == 0:
+        return result
+    try:
+        import rasterio
+        from rasterio.transform import rowcol
+        from rasterio.warp import transform
+        from rasterio.windows import Window
+    except ImportError as exc:
+        raise RuntimeError(
+            "3DEP sampling needs rasterio; pip install 'monarc[ingest]'"
+        ) from exc
+    try:
+        with rasterio.open(href) as dataset:
+            if dataset.crs is None:
+                return result
+            xs, ys = transform(
+                "EPSG:4326", dataset.crs,
+                [float(value) for value in lons], [float(value) for value in lats],
+            )
+            xs = np.asarray(xs, dtype=np.float64)
+            ys = np.asarray(ys, dtype=np.float64)
+            inside = (
+                (xs >= dataset.bounds.left)
+                & (xs <= dataset.bounds.right)
+                & (ys >= dataset.bounds.bottom)
+                & (ys <= dataset.bounds.top)
+            )
+            if not np.any(inside):
+                return result
+            rows, cols = rowcol(dataset.transform, xs, ys)
+            rows = np.asarray(rows, dtype=np.float64)
+            cols = np.asarray(cols, dtype=np.float64)
+            inside_idx = np.flatnonzero(inside)
+            rmin = int(np.floor(rows[inside_idx].min()))
+            rmax = int(np.ceil(rows[inside_idx].max()))
+            cmin = int(np.floor(cols[inside_idx].min()))
+            cmax = int(np.ceil(cols[inside_idx].max()))
+            rmin = max(rmin, 0)
+            cmin = max(cmin, 0)
+            rmax = min(rmax, int(dataset.height) - 1)
+            cmax = min(cmax, int(dataset.width) - 1)
+            height = rmax - rmin + 1
+            width = cmax - cmin + 1
+            max_window = 2048
+            use_window = height > 0 and width > 0 and height * width <= max_window * max_window
+            if use_window:
+                band = dataset.read(1, window=Window(cmin, rmin, width, height), masked=True)
+                for index in inside_idx.tolist():
+                    rr = int(round(rows[index])) - rmin
+                    cc = int(round(cols[index])) - cmin
+                    if rr < 0 or cc < 0 or rr >= height or cc >= width:
+                        continue
+                    value = band[rr, cc]
+                    if np.ma.is_masked(value):
+                        continue
+                    height_m = float(value)
+                    if not np.isfinite(height_m):
+                        continue
+                    if dataset.nodata is not None and np.isclose(height_m, float(dataset.nodata)):
+                        continue
+                    result[index] = height_m
+            else:
+                points = [(float(xs[i]), float(ys[i])) for i in inside_idx.tolist()]
+                for index, sample in zip(
+                    inside_idx.tolist(),
+                    dataset.sample(points, indexes=1, masked=True),
+                    strict=True,
+                ):
+                    value = sample[0]
+                    if np.ma.is_masked(value):
+                        continue
+                    height_m = float(value)
+                    if not np.isfinite(height_m):
+                        continue
+                    if dataset.nodata is not None and np.isclose(height_m, float(dataset.nodata)):
+                        continue
+                    result[index] = height_m
+    except (OSError, StopIteration, ValueError):
+        pass
+    return result
 
 
 def _contains(record: JsonObj, lon: float, lat: float) -> bool:
@@ -163,6 +257,82 @@ def _lat_lon_rows(
     return [str(value) for value in ids], lats, lons, sidecars
 
 
+def _patch_lon_lat(
+    lats: Sequence[float],
+    lons: Sequence[float],
+    gsd: Sequence[float],
+    height: int,
+    width: int,
+    patch_size: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return patch-center latitude/longitude arrays shaped [N, H, W]."""
+    rows, cols = np.indices((height, width), dtype=np.float64)
+    px = (cols + 0.5) * patch_size
+    py = (rows + 0.5) * patch_size
+    size_x = width * patch_size
+    size_y = height * patch_size
+    patch_lats = np.empty((len(lats), height, width), dtype=np.float64)
+    patch_lons = np.empty_like(patch_lats)
+    for index, (lat, lon, gsd_m) in enumerate(zip(lats, lons, gsd, strict=True)):
+        m_lat, m_lon = meters_per_degree(float(lat))
+        patch_lats[index] = float(lat) + (size_y / 2.0 - py) * float(gsd_m) / m_lat
+        patch_lons[index] = float(lon) + (px - size_x / 2.0) * float(gsd_m) / m_lon
+    return patch_lats, patch_lons
+
+
+def fill_patch_xyz(
+    patch_lats: np.ndarray,
+    patch_lons: np.ndarray,
+    origin_lat: float,
+    origin_lon: float,
+    records: Sequence[JsonObj],
+    *,
+    sampler: BatchElevationSampler = sample_elevations,
+) -> np.ndarray:
+    """Sample per-patch terrain and return metric ENU xyz, retaining NaN failures.
+
+    Each chip is sampled as one compact batch so HTTPS COG range-reads stay
+    window-sized rather than one request per DINO cell.
+    """
+    if patch_lats.shape != patch_lons.shape or patch_lats.ndim != 3:
+        raise ValueError("patch lat/lon must have matching [N, H, W] shapes")
+    n_chips, height, width = patch_lats.shape
+    out = np.full((n_chips, height, width, 3), np.nan, dtype=np.float64)
+    for chip in range(n_chips):
+        flat_lat = patch_lats[chip].reshape(-1)
+        flat_lon = patch_lons[chip].reshape(-1)
+        heights = np.full(flat_lat.shape, np.nan, dtype=np.float64)
+        for record in records:
+            href = _record_href(record)
+            if not href:
+                continue
+            unresolved = ~np.isfinite(heights)
+            indices = np.array(
+                [
+                    i
+                    for i in np.flatnonzero(unresolved).tolist()
+                    if _contains(record, float(flat_lon[i]), float(flat_lat[i]))
+                ],
+                dtype=np.int64,
+            )
+            if not indices.size:
+                continue
+            sampled = np.asarray(
+                sampler(href, flat_lon[indices].tolist(), flat_lat[indices].tolist()),
+                dtype=np.float64,
+            )
+            if sampled.shape != (indices.size,):
+                raise ValueError("batch elevation sampler returned the wrong shape")
+            valid = np.isfinite(sampled)
+            heights[indices[valid]] = sampled[valid]
+            if np.isfinite(heights).all():
+                break
+        enu = geodetic_to_enu(flat_lat, flat_lon, heights, origin_lat, origin_lon)
+        enu[~np.isfinite(heights)] = np.nan
+        out[chip] = enu.reshape(height, width, 3)
+    return out
+
+
 def _update_meta(directory: Path, xyz: np.ndarray) -> None:
     path = directory / "meta.json"
     meta = _load_json(path)
@@ -181,7 +351,10 @@ def fill_xyz_dirs(
     chips_dir: str | Path | None = None,
     href: str | None = None,
     offline: bool = False,
+    patches: bool = False,
+    gsd_m: float = 0.3,
     sampler: ElevationSampler = sample_elevation,
+    batch_sampler: BatchElevationSampler = sample_elevations,
 ) -> JsonObj:
     """Fill extract/FSQ arrays and matching sidecars from chip-center samples."""
     extract = Path(extract_dir)
@@ -224,7 +397,7 @@ def fill_xyz_dirs(
         payload["xyz"] = [float(value) for value in filled[index]]
         sidecar.write_text(json.dumps(payload, sort_keys=True) + "\n")
     after = np.isfinite(filled[:, 2])
-    return {
+    report = {
         "n_chips": int(filled.shape[0]),
         "n_z_filled": int(np.count_nonzero(after & ~before)),
         "n_z_finite": int(np.count_nonzero(after)),
@@ -236,3 +409,59 @@ def fill_xyz_dirs(
             urlparse(_record_href(record) or "").scheme in {"http", "https"} for record in records
         ),
     }
+    if patches:
+        features = np.load(extract / "features.npy", mmap_mode="r")
+        if features.ndim != 4:
+            raise ValueError("per-patch xyz needs features shaped [N, C, H, W]")
+        if features.shape[0] != filled.shape[0]:
+            raise ValueError("feature and xyz chip counts differ")
+        meta = _load_json(extract / "meta.json")
+        patch_size = float(meta.get("patch_size", 14))
+        windows = {
+            _chip_key(str(window.get("id", ""))): window
+            for window in (manifest.get("chip_extract") or {}).get("windows") or []
+        }
+        naip_items = {
+            str(item.get("id")): item for item in (manifest.get("naip") or {}).get("items") or []
+            if item.get("id") is not None
+        }
+        gsds = []
+        for raw_id in ids:
+            window = windows.get(_chip_key(raw_id), {})
+            item = naip_items.get(str(window.get("item_id")), {})
+            item_properties = item.get("properties") or {}
+            value = window.get("gsd_m", window.get("gsd"))
+            if value is None:
+                value = item.get("gsd", item_properties.get("gsd", gsd_m))
+            value = gsd_m if value is None else value
+            if float(value) <= 0:
+                raise ValueError("GSD must be positive")
+            gsds.append(float(value))
+        patch_lats, patch_lons = _patch_lon_lat(
+            lats, lons, gsds, int(features.shape[2]), int(features.shape[3]), patch_size
+        )
+        patch_xyz = fill_patch_xyz(
+            patch_lats, patch_lons, float(origin_lat), float(origin_lon), records,
+            sampler=batch_sampler,
+        )
+        np.save(extract / "patch_xyz.npy", patch_xyz)
+        if fsq is not None:
+            np.save(fsq / "patch_xyz.npy", patch_xyz)
+        for directory in (extract, fsq):
+            if directory is None:
+                continue
+            patch_meta = _load_json(directory / "meta.json")
+            patch_meta["xyz_kind"] = "per-patch-3dep"
+            patch_meta["xyz_is_chip_center"] = False
+            patch_meta["patch_xyz_finite"] = bool(np.isfinite(patch_xyz).all())
+            patch_meta["rasters_copied"] = False
+            (directory / "meta.json").write_text(
+                json.dumps(patch_meta, indent=2, sort_keys=True) + "\n"
+            )
+        report.update(
+            xyz_kind="per-patch-3dep",
+            xyz_is_chip_center=False,
+            n_patch_samples=int(np.prod(patch_xyz.shape[:-1])),
+            n_patch_xyz_finite=int(np.count_nonzero(np.isfinite(patch_xyz).all(axis=-1))),
+        )
+    return report
