@@ -124,6 +124,7 @@ def _cmd_eval_place_score(args: argparse.Namespace) -> int:
         backbone_mode=args.backbone, weights_path=args.weights, device=args.device,
         allow_download=args.allow_download, max_crop_queries=args.max_crop_queries,
         max_overlap_queries=args.max_overlap_queries,
+        query_extract_dir=args.query_extract,
     )
     json.dump(report, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
@@ -351,6 +352,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Same-place crop/overlap verification from local DINO grids and FSQ codes. CPU, no network.",
     )
     place_ev.add_argument("--extract", type=Path, required=True)
+    place_ev.add_argument("--query-extract", type=Path,
+                          help="Separate extract supplying reencoded-overlap query ids and xyz")
     place_ev.add_argument("--fsq", type=Path, required=True)
     place_ev.add_argument("--out", type=Path, required=True)
     place_ev.add_argument("--gsd-m", type=float, default=0.3)

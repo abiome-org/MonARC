@@ -81,6 +81,15 @@ This requires an ingest whose center spacing is smaller than the chip width.
 `reencoded-crop` remains a same-PNG crop-and-resize test; it does not contain
 pixels from an adjacent region.
 
+With `--query-extract <dir>`, `reencoded-overlap` selects and re-encodes source
+PNGs from that extract but scores them against every chip in the separate
+`--extract`/`--fsq` gallery. This permits kilometer-scale far negatives without
+re-extracting the gallery. Mixed-gallery truth is the nearest gallery center
+within one chip width, otherwise the gallery footprint with the greatest
+positive intersection area. If the query lies in a gallery-grid hole or
+outside the gallery AOI and no footprint intersects, it has no positive:
+`n_overlap_queries=0` is reported rather than assigning the nearest chip.
+
 The gallery is the complement of the existing high-side spatial-box holdout.
 For the crop query kinds, each selected gallery chip supplies one crop-jitter query whose true identity is
 that gallery chip. Distinct gallery chips also supply spatial-overlap

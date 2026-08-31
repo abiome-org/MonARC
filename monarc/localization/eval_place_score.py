@@ -178,6 +178,121 @@ def _nearest_overlap_pairs(
     return pairs, spacings
 
 
+def _mixed_gallery_positives(query_xy: np.ndarray, gallery_xy: np.ndarray,
+                             chip_size_m: float) -> list[int | None]:
+    """Assign only center-radius or positive-footprint-overlap gallery truth."""
+    positives: list[int | None] = []
+    for xy in np.asarray(query_xy, dtype=np.float64):
+        delta = np.asarray(gallery_xy, dtype=np.float64) - xy[:2]
+        distance = np.linalg.norm(delta, axis=1)
+        within = np.flatnonzero(distance <= float(chip_size_m))
+        if within.size:
+            positives.append(int(within[np.argmin(distance[within])]))
+            continue
+        intersection = np.maximum(0.0, chip_size_m - np.abs(delta[:, 0])) * np.maximum(
+            0.0, chip_size_m - np.abs(delta[:, 1]))
+        positives.append(int(np.argmax(intersection)) if np.any(intersection > 0.0) else None)
+    return positives
+
+
+def _distance_summary(values: list[float]) -> dict[str, float | None]:
+    array = np.asarray(values, dtype=np.float64)
+    return {"min_m": float(np.min(array)) if array.size else None,
+            "median_m": float(np.median(array)) if array.size else None,
+            "max_m": float(np.max(array)) if array.size else None}
+
+
+def _evaluate_mixed_gallery(codes: np.ndarray, features: np.ndarray, gallery_xyz: np.ndarray,
+                            queries: list[dict[str, Any]], query_xyz: np.ndarray, *,
+                            codebook_size: int, gallery_ids: list[str], query_ids: list[str],
+                            gsd_m: float, size_px: int, top_k: int) -> dict[str, Any]:
+    code_grids, feature_grids = _grid(codes, "codes"), _feature_grids(features)
+    gallery_pos = np.asarray(gallery_xyz, dtype=np.float64).reshape(-1, 3)
+    query_pos = np.asarray(query_xyz, dtype=np.float64).reshape(-1, 3)
+    if code_grids.shape[0] != gallery_pos.shape[0] or feature_grids.shape[0] != gallery_pos.shape[0]:
+        raise ValueError("gallery codes, features, and xyz chip counts differ")
+    if int(top_k) < 1:
+        raise ValueError("top_k must be positive")
+    chip_size_m = float(size_px) * float(gsd_m)
+    source_xy = np.asarray([query_pos[int(q["source"]), :2] for q in queries], dtype=np.float64)
+    for query, positive in zip(queries, _mixed_gallery_positives(source_xy, gallery_pos[:, :2], chip_size_m)):
+        query["true"] = positive
+    gallery = np.arange(gallery_pos.shape[0], dtype=np.int64)
+    k = min(int(top_k), int(gallery.size))
+    modes: dict[str, Any] = {}
+    for mode in (BAG_OF_CODES_DESCRIPTOR, DINO_POOLED_DESCRIPTOR, DINO_GRID_DESCRIPTOR):
+        positive_scores, negative_scores, rows_out, conditional_xy = [], [], [], []
+        hits = 0
+        for ordinal, query in enumerate(queries):
+            scores = np.asarray([_mode_score(mode, query["codes"], query["features"], code_grids[gi],
+                                             feature_grids[gi], codebook_size) for gi in gallery])
+            true_i = query["true"]
+            if true_i is None:
+                negative_scores.extend(scores.tolist())
+                true_score, true_id, rank1_hit, topk_hit = None, None, False, False
+            else:
+                true_i = int(true_i)
+                true_score, true_id = float(scores[true_i]), gallery_ids[true_i]
+                positive_scores.append(true_score)
+                negative_scores.extend(scores[gallery != true_i].tolist())
+                ranked = np.argsort(-scores, kind="stable")[:k]
+                rank1_hit = bool(ranked.size and int(ranked[0]) == true_i)
+                topk_hit = bool(np.any(ranked == true_i))
+                hits += int(rank1_hit)
+                if topk_hit:
+                    conditional_xy.append(float(np.linalg.norm(source_xy[ordinal] - gallery_pos[true_i, :2])))
+            rows_out.append({"kind": query["kind"], "query_kind": query["query_kind"],
+                             "query_id": query_ids[int(query["source"])], "true_id": true_id,
+                             "true_score": true_score, "rank1_hit": rank1_hit,
+                             "true_in_top_k": topk_hit})
+        n_positive = len(positive_scores)
+        modes[mode] = {"descriptor": mode, "auroc": _auc(positive_scores, negative_scores),
+                       "recall_at_1_same_place": hits / n_positive if n_positive else None,
+                       "n_same_place_scores": n_positive, "n_far_pair_scores": len(negative_scores),
+                       "xy_when_true_in_top_k": {"n": len(conditional_xy),
+                           "median_m": float(np.median(conditional_xy)) if conditional_xy else None,
+                           "values_m": conditional_xy}, "queries": rows_out}
+    same_inliers = [match_dino_grids(q["features"], feature_grids[int(q["true"])],
+                                     min_cosine=INLIER_MIN_COSINE)[0].size
+                    for q in queries if q["true"] is not None]
+    far_inliers = [match_dino_grids(q["features"], feature_grids[gi], min_cosine=INLIER_MIN_COSINE)[0].size
+                   for q in queries for gi in gallery if q["true"] is None or gi != int(q["true"])]
+    far_distances = [float(np.linalg.norm(query_pos[int(q["source"]), :2] - gallery_pos[gi, :2]))
+                     for q in queries for gi in gallery if q["true"] is None or gi != int(q["true"])]
+    nearest = ([float(np.min(np.linalg.norm(gallery_pos[:, :2] - xy, axis=1))) for xy in source_xy]
+               if gallery.size else [])
+    east_span = float(np.ptp(gallery_pos[:, 0])) if gallery.size else 0.0
+    north_span = float(np.ptp(gallery_pos[:, 1])) if gallery.size else 0.0
+    far_summary = _distance_summary(far_distances)
+    true_km = max(east_span, north_span) >= 1000.0 or (
+        far_summary["median_m"] is not None and far_summary["median_m"] >= 1000.0)
+    inside = bool(source_xy.size and gallery.size and
+                  np.all(np.min(source_xy, axis=0) >= np.min(gallery_pos[:, :2], axis=0)) and
+                  np.all(np.max(source_xy, axis=0) <= np.max(gallery_pos[:, :2], axis=0)))
+    n_positive = sum(q["true"] is not None for q in queries)
+    h, w = code_grids.shape[1:]
+    headline = modes[BAG_OF_CODES_DESCRIPTOR]
+    return {"track": "colorado-place-verification",
+            "protocol": "same-place overlap (reencoded neighbor vs mixed gallery)",
+            "query_kind": "reencoded-overlap", "mixed_gallery": True,
+            "not": ["university1652", "ortholoc", "colorado-flight-ate", "hunter", "vla"],
+            "network": False, "descriptor": BAG_OF_CODES_DESCRIPTOR,
+            "auroc": headline["auroc"], "recall_at_1_same_place": headline["recall_at_1_same_place"],
+            "n_crop_queries": 0, "n_overlap_queries": n_positive, "n_overlap_pairs": n_positive,
+            "n_far_queries": len(queries), "n_gallery": int(gallery.size),
+            "chip_size_m": chip_size_m, "overlap_radius_m": chip_size_m, "top_k": k,
+            "n_inliers_same_place": int(sum(same_inliers)), "n_inliers_far": int(sum(far_inliers)),
+            "inlier_rates": {"same_place": float(sum(same_inliers) / (n_positive * h * w)) if n_positive else None,
+                             "far": float(sum(far_inliers) / (len(far_inliers) * h * w)) if far_inliers else None},
+            "inlier_definition": {"matcher": "mutual-nearest-dino-grid", "min_cosine": INLIER_MIN_COSINE},
+            "far_distance": {**far_summary, "gallery_span_east_m": east_span,
+                             "gallery_span_north_m": north_span, "true_km_far": bool(true_km),
+                             "scale": "km" if true_km else "m"},
+            "query_bbox_inside_gallery_bbox": inside,
+            "nearest_gallery_distance_m": _distance_summary(nearest), "modes": modes,
+            "note": "Mixed queries use all gallery chips; zero-footprint nearest chips are not positives."}
+
+
 def _reencode_overlap_queries(
     chips_dir: str | Path,
     ids: list[str],
@@ -416,7 +531,8 @@ def evaluate_place_score_dirs(extract_dir: str | Path, fsq_dir: str | Path, *,
                               weights_path: str | Path | None = None,
                               device: str = "cpu", allow_download: bool = False,
                               max_crop_queries: int | None = None,
-                              max_overlap_queries: int | None = None) -> dict[str, Any]:
+                              max_overlap_queries: int | None = None,
+                              query_extract_dir: str | Path | None = None) -> dict[str, Any]:
     payload = load_retrieve_inputs(extract_dir, fsq_dir)
     # load_retrieve_inputs intentionally flattens code grids for legacy chip
     # retrieval; place verification needs their stored spatial layout.
@@ -424,6 +540,9 @@ def evaluate_place_score_dirs(extract_dir: str | Path, fsq_dir: str | Path, *,
     size_px = int(payload["extract_meta"].get("size", payload["extract_meta"].get("chip_size", 224)))
     crop_queries = None
     reencode_meta: dict[str, Any] = {}
+    mixed = query_extract_dir is not None and Path(query_extract_dir).resolve() != Path(extract_dir).resolve()
+    if query_extract_dir is not None and query_kind != "reencoded-overlap":
+        raise ValueError("query_extract_dir is supported only for reencoded-overlap")
     if query_kind == "reencoded-crop":
         if chips_dir is None:
             raise ValueError("chips_dir is required for reencoded-crop")
@@ -440,21 +559,36 @@ def evaluate_place_score_dirs(extract_dir: str | Path, fsq_dir: str | Path, *,
         if chips_dir is None:
             raise ValueError("chips_dir is required for reencoded-overlap")
         checkpoint = Path(fsq_ckpt) if fsq_ckpt is not None else Path(fsq_dir) / "stage1_last.pt"
-        split = spatial_holdout_indices(payload["xyz"], query_fraction=query_fraction, axis=axis)
         radius_m = float(size_px) * float(gsd_m)
-        pairs, _ = _nearest_overlap_pairs(split["gallery_idx"], payload["xyz"], radius_m)
+        if mixed:
+            query_payload = load_retrieve_inputs(query_extract_dir, query_extract_dir)
+            pairs, _ = _nearest_overlap_pairs(np.arange(len(query_payload["ids"])),
+                                              query_payload["xyz"], radius_m)
+            query_ids = query_payload["ids"]
+        else:
+            split = spatial_holdout_indices(payload["xyz"], query_fraction=query_fraction, axis=axis)
+            pairs, _ = _nearest_overlap_pairs(split["gallery_idx"], payload["xyz"], radius_m)
+            query_ids = payload["ids"]
         crop_queries, reencode_meta = _reencode_overlap_queries(
-            chips_dir, payload["ids"], pairs, checkpoint, size_px=size_px,
+            chips_dir, query_ids, pairs, checkpoint, size_px=size_px,
             backbone_mode=backbone_mode, weights_path=weights_path, device=device,
             allow_download=allow_download, max_overlap_queries=max_overlap_queries,
         )
-    report = evaluate_place_score(spatial_codes, payload["features"], payload["xyz"],
-                                  codebook_size=payload["codebook_size"], ids=payload["ids"],
-                                  gsd_m=gsd_m, size_px=size_px, query_fraction=query_fraction,
-                                  axis=axis, crop_margin=crop_margin, top_k=top_k,
-                                  query_kind=query_kind, crop_queries=crop_queries)
+    if mixed:
+        report = _evaluate_mixed_gallery(
+            spatial_codes, payload["features"], payload["xyz"], crop_queries or [], query_payload["xyz"],
+            codebook_size=payload["codebook_size"], gallery_ids=payload["ids"], query_ids=query_payload["ids"],
+            gsd_m=gsd_m, size_px=size_px, top_k=top_k)
+    else:
+        report = evaluate_place_score(spatial_codes, payload["features"], payload["xyz"],
+                                      codebook_size=payload["codebook_size"], ids=payload["ids"],
+                                      gsd_m=gsd_m, size_px=size_px, query_fraction=query_fraction,
+                                      axis=axis, crop_margin=crop_margin, top_k=top_k,
+                                      query_kind=query_kind, crop_queries=crop_queries)
     report.update({"extract_dir": payload["extract_dir"], "fsq_dir": payload["fsq_dir"],
-                   "xyz_source": payload["xyz_source"]})
+                   "xyz_source": payload["xyz_source"],
+                   "query_extract_dir": str(Path(query_extract_dir)) if query_extract_dir is not None else None,
+                   "mixed_gallery": mixed})
     report.update(reencode_meta)
     if out is not None:
         path = Path(out)
