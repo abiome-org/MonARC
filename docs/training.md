@@ -169,4 +169,4 @@ This freeze schedule prevents catastrophic forgetting of the visual codebook and
 
 ## 6. First executable increment
 
-`monarc dry-run` runs a few CPU steps of Stage 1 (fusion + FSQ projection; frozen DINO-contract stub). Stage 2 public-UAV alignment uses the University-1652 loader when a local tree is present. Stage 3 Hunter/MPPI is not trained in this increment. The v0 pose path is matcher + PnP/LM (`monarc.localization.dpnp`), not Perceiver regression.
+`monarc dry-run` runs a few CPU steps of Stage 1 (fusion + FSQ projection; frozen DINO-contract stub). `monarc extract` + `monarc train-fsq` is the GPU path: frozen DINOv2-B/14 (`dinov2_vitb14`) on RGB chips, then FSQ on cached features with periodic checkpoints. Stage 2 public-UAV alignment uses the University-1652 loader when a local tree is present (optional zip URL download). Stage 3 Hunter/MPPI is not trained in this increment. The v0 pose path is matcher + PnP/LM (`monarc.localization.dpnp`), not Perceiver regression.

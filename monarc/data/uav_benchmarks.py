@@ -8,8 +8,15 @@ the same reason as a follow-on retrieval set.
 
 from __future__ import annotations
 
+import os
+import tarfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
+
+UNIVERSITY1652_URL_ENV = "MONARC_U1652_URL"
+UNIVERSITY1652_REQUEST_URL = "https://github.com/layumi/University1652-Baseline"
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
 
@@ -61,6 +68,75 @@ def _building_dirs(root: Path) -> list[Path]:
     return sorted([p for p in root.iterdir() if p.is_dir()])
 
 
+def _fetch_url(url: str, dest: Path, timeout: float = 120.0) -> None:
+    """Download ``url`` to ``dest``. Tests patch this; it is never called by fixtures."""
+    import urllib.request
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https", "file"}:
+        raise ValueError(f"unsupported download URL scheme: {parsed.scheme!r}")
+    with urllib.request.urlopen(url, timeout=timeout) as src, dest.open("wb") as out:
+        while True:
+            chunk = src.read(1024 * 1024)
+            if not chunk:
+                break
+            out.write(chunk)
+
+
+def find_university1652_root(root: Path) -> Path:
+    """Return the directory that contains ``train/drone`` under ``root``."""
+    root = Path(root)
+    if (root / "train" / "drone").is_dir():
+        return root
+    hits = sorted(p.parent.parent for p in root.glob("**/train/drone") if p.is_dir())
+    if hits:
+        return hits[0]
+    raise DatasetLayoutError(
+        f"{root} exists but is not a University-1652 tree "
+        "(expected train/drone/<id>/*.jpg)"
+    )
+
+
+def download_university1652(root: str | Path, url: str | None = None) -> Path:
+    """Fetch a licensed zip/tar into ``root`` and return the ImageFolder root.
+
+    University-1652 is request-gated. This function does not scrape Google Drive.
+    Supply ``url`` or ``MONARC_U1652_URL``.
+    """
+    root = Path(root)
+    url = url or os.environ.get(UNIVERSITY1652_URL_ENV)
+    if not url:
+        raise FileNotFoundError(
+            "University-1652 download requires --download-url or "
+            f"{UNIVERSITY1652_URL_ENV} pointing at a zip/tar you are licensed "
+            f"to fetch. Request the dataset from {UNIVERSITY1652_REQUEST_URL}. "
+            "Tests use write_university1652_fixture (no network)."
+        )
+    staging = root / "_download"
+    archive = staging / "university1652.archive"
+    _fetch_url(url, archive)
+    extract_into = staging / "extracted"
+    extract_into.mkdir(parents=True, exist_ok=True)
+    if zipfile.is_zipfile(archive):
+        with zipfile.ZipFile(archive) as zf:
+            zf.extractall(extract_into)
+    elif tarfile.is_tarfile(archive):
+        with tarfile.open(archive) as tf:
+            tf.extractall(extract_into)
+    else:
+        raise DatasetLayoutError(f"downloaded file is not zip/tar: {archive}")
+    found = find_university1652_root(extract_into)
+    root.mkdir(parents=True, exist_ok=True)
+    if found.resolve() != root.resolve():
+        for child in found.iterdir():
+            target = root / child.name
+            if target.exists():
+                continue
+            child.rename(target)
+    return find_university1652_root(root)
+
+
 class University1652:
     """Parse the layumi University-1652 directory tree without downloading it.
 
@@ -78,14 +154,30 @@ class University1652:
     source_url = "https://github.com/layumi/University1652-Baseline"
     report_track = "public-uav-adapter"
 
-    def __init__(self, root: str | Path, include_street: bool = False) -> None:
+    def __init__(
+        self,
+        root: str | Path,
+        include_street: bool = False,
+        download: bool = False,
+        download_url: str | None = None,
+    ) -> None:
         self.root = Path(root)
         self.include_street = include_street
-        if not self.root.is_dir():
+        if self.root.is_dir():
+            try:
+                self.root = find_university1652_root(self.root)
+                return
+            except DatasetLayoutError:
+                if not download:
+                    raise
+        elif not download:
             raise FileNotFoundError(
                 f"University-1652 root not found: {self.root}. "
-                "Download is optional; pass a local tree or use the test fixture."
+                "Download is optional; pass a local tree, "
+                f"--download with --download-url / {UNIVERSITY1652_URL_ENV}, "
+                "or use the test fixture."
             )
+        self.root = download_university1652(self.root, url=download_url)
 
     def _split_dir(self, *parts: str) -> Path:
         return self.root.joinpath(*parts)

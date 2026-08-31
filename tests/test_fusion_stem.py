@@ -26,6 +26,11 @@ def test_dino_is_frozen_and_cpu():
     assert not any(p.is_cuda for p in net.parameters())
 
 
+def test_auto_backbone_is_stub_without_cuda():
+    net = FrozenDinoBackbone(mode="auto")
+    assert net.mode == "stub"
+
+
 def test_vitb14_requires_local_weights():
     try:
         FrozenDinoBackbone(mode="vitb14")
