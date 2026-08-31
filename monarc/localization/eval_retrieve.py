@@ -1,10 +1,15 @@
-"""Colorado-track chip retrieval: bag-of-codes on a spatial holdout.
+"""Colorado-track chip retrieval: bag-of-codes plus frozen DINO on a spatial holdout.
 
 Loads local ``extract`` + ``fsq`` arrays. No network. Query chips come from
 a geographically disjoint box (high side of the longest east/north span),
 not a random sample of neighboring chips. Rank-1 xyz error is the retrieved
 gallery chip versus the query chip. Recall@K is a hit when the spatially
 nearest gallery chip is in the top K.
+
+Bag-of-codes is the FSQ baseline. When ``features.npy`` is present, the same
+split is also scored with frozen DINO pooled cosine (mean over the feature
+grid) and flattened-grid cosine. Top-level Recall@K / xyz error remain the
+bag-of-codes numbers.
 
 Numbers are this chip set only. They are not University-1652 Recall@1 and
 not Colorado GPS-denied flight ATE.
@@ -18,7 +23,15 @@ from typing import Any
 
 import numpy as np
 
-from monarc.localization.global_retrieve import CodeRetriever
+from monarc.localization.global_retrieve import (
+    BAG_OF_CODES_DESCRIPTOR,
+    DINO_GRID_DESCRIPTOR,
+    DINO_POOLED_DESCRIPTOR,
+    FEATURE_POOL_FLATTEN,
+    FEATURE_POOL_MEAN,
+    CodeRetriever,
+    FeatureRetriever,
+)
 
 TINY_N_CHIPS = 128
 TINY_N_QUERY = 32
@@ -49,6 +62,17 @@ def _as_xyz(xyz: np.ndarray) -> np.ndarray:
     arr = np.asarray(xyz, dtype=np.float64).reshape(-1, 3)
     if arr.ndim != 2 or arr.shape[1] != 3:
         raise ValueError(f"xyz must be [N, 3], got {arr.shape}")
+    return arr
+
+
+def _as_chip_features(features: np.ndarray, n_chips: int) -> np.ndarray:
+    arr = np.asarray(features)
+    if arr.shape[0] != n_chips:
+        raise ValueError(f"features chip count {arr.shape[0]} != {n_chips}")
+    if arr.ndim not in (2, 3, 4):
+        raise ValueError(
+            f"features must be [N, D], [N, C, T], or [N, C, H, W], got {arr.shape}"
+        )
     return arr
 
 
@@ -233,49 +257,27 @@ def _tiny_reason(n_chips: int, n_query: int, n_gallery: int) -> str | None:
     return "; ".join(reasons)
 
 
-def evaluate_chip_retrieve(
-    codes: np.ndarray,
+def _score_ranked_queries(
+    ranked_per_query: list[list[tuple[str, float]]],
+    query_idx: np.ndarray,
+    ids: list[str],
     xyz: np.ndarray,
-    *,
-    codebook_size: int,
-    ids: list[str] | None = None,
-    query_fraction: float = 0.25,
-    axis: str | int | None = "auto",
-    ks: tuple[int, ...] = (1, 5),
+    gallery_xyz: np.ndarray,
+    gallery_ids: list[str],
+    gt_ids_per_query: list[list[str]],
+    oracle_err: list[float],
+    ks: tuple[int, ...],
+    use_3d: bool,
 ) -> dict[str, Any]:
-    """Bag-of-codes retrieve on a spatial holdout. CPU, no network."""
-    codes = _as_chip_codes(codes)
-    xyz = _as_xyz(xyz)
-    n = int(codes.shape[0])
-    if xyz.shape[0] != n:
-        raise ValueError("codes and xyz chip counts differ")
-    if ids is None or len(ids) != n:
-        ids = [f"chip-{i:04d}" for i in range(n)]
-    split = spatial_holdout_indices(xyz, query_fraction=query_fraction, axis=axis)
-    query_idx = split["query_idx"]
-    gallery_idx = split["gallery_idx"]
-    use_3d = bool(np.isfinite(xyz[:, 2]).all())
-    retriever = CodeRetriever(codebook_size=int(codebook_size))
-    for gi in gallery_idx.tolist():
-        retriever.add(ids[int(gi)], codes[int(gi)])
-    max_k = max(int(k) for k in ks)
-    k_cap = min(max_k, int(gallery_idx.size))
+    n_query = int(query_idx.size)
     hits = {int(k): 0 for k in ks}
     rank1_err: list[float] = []
-    oracle_err: list[float] = []
     per_query: list[dict[str, Any]] = []
-    gallery_xyz = xyz[gallery_idx]
-    gallery_ids = [ids[int(i)] for i in gallery_idx.tolist()]
-    for qi in query_idx.tolist():
+    for qi, ranked, gt_ids, oracle in zip(
+        query_idx.tolist(), ranked_per_query, gt_ids_per_query, oracle_err, strict=True
+    ):
         qi = int(qi)
-        ranked = retriever.query(codes[qi], k=k_cap)
         ranked_ids = [doc for doc, _score in ranked]
-        nearest_local = nearest_gallery_indices(xyz[qi], gallery_xyz, use_3d=use_3d)
-        gt_ids = [gallery_ids[int(j)] for j in nearest_local.tolist()]
-        oracle = min(
-            chip_distance(xyz[qi], gallery_xyz[int(j)], use_3d=use_3d) for j in nearest_local.tolist()
-        )
-        oracle_err.append(float(oracle))
         rank1_id = ranked_ids[0] if ranked_ids else None
         if rank1_id is None:
             err = float("nan")
@@ -283,7 +285,7 @@ def evaluate_chip_retrieve(
             gpos = gallery_ids.index(rank1_id)
             err = chip_distance(xyz[qi], gallery_xyz[gpos], use_3d=use_3d)
         rank1_err.append(err)
-        row_hits = {}
+        row_hits: dict[str, bool] = {}
         for k in ks:
             hit = bool(set(ranked_ids[: int(k)]) & set(gt_ids))
             row_hits[f"hit_at_{int(k)}"] = hit
@@ -300,19 +302,152 @@ def evaluate_chip_retrieve(
                 **row_hits,
             }
         )
-    n_query = int(query_idx.size)
-    n_gallery = int(gallery_idx.size)
-    tiny_reason = _tiny_reason(n, n_query, n_gallery)
-    unique_codes = int(np.unique(codes).size)
     recall = {
         f"recall_at_{int(k)}": (hits[int(k)] / n_query) if n_query else float("nan")
         for k in ks
     }
+    return {
+        **recall,
+        "median_xyz_error_m": percentile(np.asarray(rank1_err), 50.0),
+        "p90_xyz_error_m": percentile(np.asarray(rank1_err), 90.0),
+        "queries": per_query,
+    }
+
+
+def _bag_rankings(
+    codes: np.ndarray,
+    query_idx: np.ndarray,
+    gallery_idx: np.ndarray,
+    ids: list[str],
+    codebook_size: int,
+    k_cap: int,
+) -> list[list[tuple[str, float]]]:
+    retriever = CodeRetriever(codebook_size=int(codebook_size))
+    for gi in gallery_idx.tolist():
+        retriever.add(ids[int(gi)], codes[int(gi)])
+    return [retriever.query(codes[int(qi)], k=k_cap) for qi in query_idx.tolist()]
+
+
+def _feature_rankings(
+    features: np.ndarray,
+    query_idx: np.ndarray,
+    gallery_idx: np.ndarray,
+    ids: list[str],
+    k_cap: int,
+    pool: str,
+) -> list[list[tuple[str, float]]]:
+    gallery_ids = [ids[int(i)] for i in gallery_idx.tolist()]
+    retriever = FeatureRetriever.from_batch(gallery_ids, features[gallery_idx], pool=pool)
+    return [retriever.query(features[int(qi)], k=k_cap) for qi in query_idx.tolist()]
+
+
+def evaluate_chip_retrieve(
+    codes: np.ndarray,
+    xyz: np.ndarray,
+    *,
+    codebook_size: int,
+    ids: list[str] | None = None,
+    query_fraction: float = 0.25,
+    axis: str | int | None = "auto",
+    ks: tuple[int, ...] = (1, 5),
+    features: np.ndarray | None = None,
+) -> dict[str, Any]:
+    """Chip retrieve on a spatial holdout. CPU, no network.
+
+    Top-level Recall@K and xyz error are bag-of-codes. When ``features`` is
+    set, the same split is also scored with frozen DINO cosine (pooled and
+    flattened grid) under ``modes``.
+    """
+    codes = _as_chip_codes(codes)
+    xyz = _as_xyz(xyz)
+    n = int(codes.shape[0])
+    if xyz.shape[0] != n:
+        raise ValueError("codes and xyz chip counts differ")
+    if ids is None or len(ids) != n:
+        ids = [f"chip-{i:04d}" for i in range(n)]
+    feat = None if features is None else _as_chip_features(features, n)
+    split = spatial_holdout_indices(xyz, query_fraction=query_fraction, axis=axis)
+    query_idx = split["query_idx"]
+    gallery_idx = split["gallery_idx"]
+    use_3d = bool(np.isfinite(xyz[:, 2]).all())
+    max_k = max(int(k) for k in ks)
+    k_cap = min(max_k, int(gallery_idx.size))
+    gallery_xyz = xyz[gallery_idx]
+    gallery_ids = [ids[int(i)] for i in gallery_idx.tolist()]
+    oracle_err: list[float] = []
+    gt_ids_per_query: list[list[str]] = []
+    for qi in query_idx.tolist():
+        qi = int(qi)
+        nearest_local = nearest_gallery_indices(xyz[qi], gallery_xyz, use_3d=use_3d)
+        gt_ids = [gallery_ids[int(j)] for j in nearest_local.tolist()]
+        oracle = min(
+            chip_distance(xyz[qi], gallery_xyz[int(j)], use_3d=use_3d) for j in nearest_local.tolist()
+        )
+        oracle_err.append(float(oracle))
+        gt_ids_per_query.append(gt_ids)
+    score_kw: dict[str, Any] = {
+        "query_idx": query_idx,
+        "ids": ids,
+        "xyz": xyz,
+        "gallery_xyz": gallery_xyz,
+        "gallery_ids": gallery_ids,
+        "gt_ids_per_query": gt_ids_per_query,
+        "oracle_err": oracle_err,
+        "ks": ks,
+        "use_3d": use_3d,
+    }
+    bag = _score_ranked_queries(
+        _bag_rankings(codes, query_idx, gallery_idx, ids, codebook_size, k_cap),
+        **score_kw,
+    )
+    modes: dict[str, Any] = {
+        BAG_OF_CODES_DESCRIPTOR: {
+            "descriptor": BAG_OF_CODES_DESCRIPTOR,
+            "features_used": False,
+            **bag,
+        }
+    }
+    descriptors = [BAG_OF_CODES_DESCRIPTOR]
+    if feat is not None:
+        feat_shape = [int(x) for x in feat.shape]
+        for descriptor, pool in (
+            (DINO_POOLED_DESCRIPTOR, FEATURE_POOL_MEAN),
+            (DINO_GRID_DESCRIPTOR, FEATURE_POOL_FLATTEN),
+        ):
+            scored = _score_ranked_queries(
+                _feature_rankings(feat, query_idx, gallery_idx, ids, k_cap, pool),
+                **score_kw,
+            )
+            modes[descriptor] = {
+                "descriptor": descriptor,
+                "features_used": True,
+                "pool": pool,
+                "feature_shape": feat_shape,
+                **scored,
+            }
+            descriptors.append(descriptor)
+    n_query = int(query_idx.size)
+    n_gallery = int(gallery_idx.size)
+    tiny_reason = _tiny_reason(n, n_query, n_gallery)
+    unique_codes = int(np.unique(codes).size)
+    features_used = feat is not None
+    if features_used:
+        retrieve_note = (
+            "Bag-of-codes is the FSQ baseline. Frozen DINO pooled cosine and "
+            "flattened-grid cosine are scored from extract features.npy on the "
+            "same spatial split."
+        )
+        protocol = "chip retrieve on spatial holdout (bag-of-codes + frozen DINO)"
+    else:
+        retrieve_note = (
+            "Retrieval is bag-of-codes; frozen DINO features were not provided."
+        )
+        protocol = "bag-of-codes chip retrieve on spatial holdout"
     note = (
         "Numbers are from this chip set and this spatial split only. "
         "They are not University-1652 Recall@1, not OrthoLoC translation, "
         "and not Colorado GPS-denied flight ATE. "
-        "Retrieval is bag-of-codes; frozen DINO features are not scored."
+        f"{retrieve_note}"
     )
     if tiny_reason:
         note = (
@@ -321,7 +456,7 @@ def evaluate_chip_retrieve(
         )
     return {
         "track": "colorado-retrieval",
-        "protocol": "bag-of-codes chip retrieve on spatial holdout",
+        "protocol": protocol,
         "not": [
             "university1652",
             "ortholoc",
@@ -335,8 +470,9 @@ def evaluate_chip_retrieve(
         "n_tokens": int(codes.size),
         "unique_codes_in_eval": unique_codes,
         "codebook_size": int(codebook_size),
-        "descriptor": "bag-of-codes",
-        "features_used": False,
+        "descriptor": BAG_OF_CODES_DESCRIPTOR,
+        "descriptors": descriptors,
+        "features_used": features_used,
         "network": False,
         "xyz_error_kind": "euclidean-3d" if use_3d else "horizontal-xy",
         "split": {
@@ -348,13 +484,14 @@ def evaluate_chip_retrieve(
             "tiny": tiny_reason is not None,
             "tiny_reason": tiny_reason,
         },
-        **recall,
-        "median_xyz_error_m": percentile(np.asarray(rank1_err), 50.0),
-        "p90_xyz_error_m": percentile(np.asarray(rank1_err), 90.0),
+        **{key: bag[key] for key in bag if key.startswith("recall_at_")},
+        "median_xyz_error_m": bag["median_xyz_error_m"],
+        "p90_xyz_error_m": bag["p90_xyz_error_m"],
         "median_oracle_xyz_m": percentile(np.asarray(oracle_err), 50.0),
         "p90_oracle_xyz_m": percentile(np.asarray(oracle_err), 90.0),
         "k_cap": k_cap,
-        "queries": per_query,
+        "queries": bag["queries"],
+        "modes": modes,
         "note": note,
     }
 
@@ -375,6 +512,7 @@ def evaluate_retrieve_dirs(
         ids=payload["ids"],
         query_fraction=query_fraction,
         axis=axis,
+        features=payload["features"],
     )
     report["extract_dir"] = payload["extract_dir"]
     report["fsq_dir"] = payload["fsq_dir"]
@@ -399,8 +537,14 @@ def write_retrieve_fixture(
     codebook_size: int = 32,
     spacing_m: float = 10.0,
     match_nearest: bool = True,
+    match_features_nearest: bool = True,
 ) -> dict[str, Any]:
-    """Tiny local codes/xyz/features for CPU tests."""
+    """Tiny local codes/xyz/features for CPU tests.
+
+    Codes copy the west neighbor when ``match_nearest`` is true, else a far
+    chip. Features encode chip east/north so pooled cosine prefers the spatial
+    neighbor; ``match_features_nearest=False`` copies a far chip's grid.
+    """
     extract_dir = Path(extract_dir)
     fsq_dir = Path(fsq_dir)
     extract_dir.mkdir(parents=True, exist_ok=True)
@@ -444,6 +588,25 @@ def write_retrieve_fixture(
                     far = 0
                 codes[i] = codes[far]
     features = np.zeros((n, 4, 2, 2), dtype=np.float16)
+    for i, (e, nrt) in enumerate(zip(east_of, north_of)):
+        features[i, 0, :, :] = float(e + 1)
+        features[i, 1, :, :] = float(nrt + 1)
+        features[i, 2, :, :] = 1.0
+        features[i, 3, 0, 0] = float(e)
+        features[i, 3, 0, 1] = float(nrt)
+        features[i, 3, 1, 0] = float(e + nrt)
+        features[i, 3, 1, 1] = float(e - nrt)
+    if not match_features_nearest:
+        for i, e in enumerate(east_of):
+            if e == n_east - 1:
+                far = None
+                for j, (e2, n2) in enumerate(zip(east_of, north_of)):
+                    if e2 == 0 and n2 != north_of[i]:
+                        far = j
+                        break
+                if far is None:
+                    far = 0
+                features[i] = features[far]
     np.save(extract_dir / "features.npy", features)
     np.save(extract_dir / "xyz.npy", xyz)
     np.save(fsq_dir / "codes.npy", codes)

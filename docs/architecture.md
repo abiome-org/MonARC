@@ -410,13 +410,13 @@ concat(f_rgb, f_geo) -> ChannelFusion -> f_fused [B, 256, H/14, W/14]
     -> FSQHead (default L=(8,5,5,5), K=1000; no VQ-VAE embedding)
     -> codes [B, H/14, W/14] integer, xyz [N, 3] ENU meters
 
-Lost-in-space retrieve: bag-of-codes (+ optional adjacent n-grams)
+Lost-in-space retrieve: bag-of-codes (+ optional adjacent n-grams); Colorado-track eval also scores frozen DINO pooled / flattened-grid cosine from extract `features.npy`
 Pose: code matcher -> 2D-3D ties -> DLT PnP + Levenberg-Marquardt on se(3)
 Persist: codes.npy, xyz.npy, meta.json (no GeoTIFF, no naip-source, no R2 rasters)
 ```
 
 Official DINOv2-B/14 (`torch.hub` `facebookresearch/dinov2` entry `dinov2_vitb14`, or Hugging Face `facebook/dinov2-base`) loads only when `mode="vitb14"` / CUDA `auto` with a local cache or `allow_download=True`. Tests, `dry-run`, and CPU `auto` use the frozen patch-14 768-d stub and do not download weights.
 
-`monarc ingest-aoi` (default `--source planetary-computer`) writes a Golden–Morrison rehearsal manifest of Planetary Computer NAIP HREFs with anonymous SAS plus public 3DEP records and a chip-window plan. `monarc extract` reads a directory of RGB chips (optional DSM, xyz sidecar) and writes `features.npy` + `xyz.npy` (optional `codes.npy` if an FSQ checkpoint is supplied). Range-read COG chips only; do not copy full GeoTIFFs to R2. `monarc train-fsq` trains fusion+FSQ on that cache on GPU and checkpoints `stage1_last.pt`. `monarc eval-retrieve` loads those arrays on CPU (no network), holds out a spatial box of chips, and reports bag-of-codes Recall@1/5 plus rank-1 xyz error. Rasters are not a persist object. v1 coverage remains Colorado; Golden–Morrison is the rehearsal slice. AWS `naip-visualization` ingest is an explicit source flag, not the first-slice default.
+`monarc ingest-aoi` (default `--source planetary-computer`) writes a Golden–Morrison rehearsal manifest of Planetary Computer NAIP HREFs with anonymous SAS plus public 3DEP records and a chip-window plan. `monarc extract` reads a directory of RGB chips (optional DSM, xyz sidecar) and writes `features.npy` + `xyz.npy` (optional `codes.npy` if an FSQ checkpoint is supplied). Range-read COG chips only; do not copy full GeoTIFFs to R2. `monarc train-fsq` trains fusion+FSQ on that cache on GPU and checkpoints `stage1_last.pt`. `monarc eval-retrieve` loads those arrays on CPU (no network), holds out a spatial box of chips, and reports bag-of-codes Recall@1/5 plus rank-1 xyz error, and the same metrics for frozen DINO pooled cosine and flattened-grid cosine when `features.npy` is present. Rasters are not a persist object. v1 coverage remains Colorado; Golden–Morrison is the rehearsal slice. AWS `naip-visualization` ingest is an explicit source flag, not the first-slice default.
 
 The Perceiver set transformer remains specified in §4 as a later Where-Am-I path. v0 pose is matcher + geometry. Hunter (subsystem 4) is unspecified in code in this increment.

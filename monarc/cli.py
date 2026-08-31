@@ -261,8 +261,9 @@ def build_parser() -> argparse.ArgumentParser:
     ev = sub.add_parser(
         "eval-retrieve",
         help=(
-            "Colorado retrieval track: bag-of-codes Recall@1/5 and xyz error "
-            "on a spatial holdout of extract+fsq chips. CPU, no network."
+            "Colorado retrieval track: bag-of-codes baseline plus frozen DINO "
+            "cosine Recall@1/5 and xyz error on a spatial holdout of extract+fsq "
+            "chips. CPU, no network."
         ),
     )
     ev.add_argument("--extract", type=Path, required=True, help="Directory with features.npy (and xyz.npy)")
