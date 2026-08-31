@@ -93,6 +93,32 @@ def _write_overlap_fixture(tmp_path, *, spacing_m=21.0, copy_far=False):
     return chips, extract, checkpoint, weights
 
 
+def _write_mixed_fixture(tmp_path, *, hole=False):
+    query_root = tmp_path / "query"
+    query_root.mkdir()
+    chips, query_extract, checkpoint, weights = _write_overlap_fixture(query_root)
+    gallery = tmp_path / "gallery"
+    gallery.mkdir()
+    query_features = np.load(query_extract / "features.npy")
+    query_codes = np.load(query_extract / "codes.npy")
+    if hole:
+        xy = [(-2000.0, -2000.0), (2000.0, -2000.0), (-2000.0, 2000.0), (2000.0, 2000.0)]
+        features = query_features[4:8].copy()
+        codes = query_codes[4:8].copy()
+    else:
+        xy = [(0.0, 0.0), (2000.0, 0.0), (-2000.0, 2000.0)]
+        features = np.stack([query_features[0], query_features[6], query_features[7]])
+        codes = np.stack([query_codes[0], query_codes[6], query_codes[7]])
+    np.save(gallery / "features.npy", features)
+    np.save(gallery / "codes.npy", codes)
+    np.save(gallery / "xyz.npy", np.asarray([[x, y, 80.0] for x, y in xy]))
+    (gallery / "ids.json").write_text(json.dumps([f"gallery-{i}.png" for i in range(len(xy))]) + "\n")
+    meta = {"size": 84, "backbone_mode": "stub", "codebook_size": int(np.max(codes)) + 1}
+    (gallery / "meta.json").write_text(json.dumps(meta) + "\n")
+    (gallery / "stage1_last.pt").write_bytes(checkpoint.read_bytes())
+    return chips, query_extract, gallery, checkpoint, weights
+
+
 def test_crop_place_verification_scores_same_place(tmp_path):
     extract, fsq = tmp_path / "extract", tmp_path / "fsq"
     write_place_score_fixture(extract, fsq, spacing_m=100.0)
@@ -233,9 +259,62 @@ def test_reencoded_overlap_far_copies_do_not_invent_perfect_auc(tmp_path):
     assert report["modes"][DINO_POOLED_DESCRIPTOR]["auroc"] < 1.0
 
 
+def test_mixed_overlap_uses_full_km_gallery_and_limit(tmp_path, capsys):
+    chips, query_extract, gallery, checkpoint, weights = _write_mixed_fixture(tmp_path)
+    out = tmp_path / "mixed.json"
+    assert main(["eval-place-score", "--query-kind", "reencoded-overlap",
+                 "--query-extract", str(query_extract), "--extract", str(gallery),
+                 "--fsq", str(gallery), "--chips", str(chips), "--out", str(out),
+                 "--gsd-m", "0.5", "--backbone", "stub", "--weights", str(weights),
+                 "--fsq-ckpt", str(checkpoint), "--max-overlap-queries", "1"]) == 0
+    capsys.readouterr()
+    report = json.loads(out.read_text())
+    assert report["mixed_gallery"] is True
+    assert report["query_kind"] == "reencoded-overlap"
+    assert report["n_crop_queries"] == 0
+    assert report["n_overlap_queries"] == report["n_reencoded"] == 1
+    assert report["n_gallery"] == 3
+    assert report["network"] is False
+    assert report["far_distance"]["true_km_far"] is True
+    assert report["far_distance"]["scale"] == "km"
+    assert max(report["far_distance"]["gallery_span_east_m"],
+               report["far_distance"]["gallery_span_north_m"]) >= 1000.0
+    assert report["modes"][DINO_POOLED_DESCRIPTOR]["auroc"] >= 0.5
+
+
+def test_mixed_overlap_hole_does_not_assign_nearest_as_truth(tmp_path):
+    chips, query_extract, gallery, checkpoint, weights = _write_mixed_fixture(tmp_path, hole=True)
+    report = evaluate_place_score_dirs(
+        gallery, gallery, query_extract_dir=query_extract, query_kind="reencoded-overlap",
+        chips_dir=chips, gsd_m=0.5, fsq_ckpt=checkpoint, backbone_mode="stub",
+        weights_path=weights, max_overlap_queries=2)
+    assert report["query_bbox_inside_gallery_bbox"] is True
+    assert report["n_overlap_queries"] == report["n_overlap_pairs"] == 0
+    assert report["auroc"] is None
+    assert report["recall_at_1_same_place"] is None
+    assert report["far_distance"]["true_km_far"] is True
+    for row in report["modes"][BAG_OF_CODES_DESCRIPTOR]["queries"]:
+        assert row["true_id"] is None
+
+
+def test_nonoverlapping_query_extract_is_honest_zero_in_both_modes(tmp_path):
+    chips, query_extract, gallery, checkpoint, weights = _write_mixed_fixture(tmp_path)
+    xyz = np.load(query_extract / "xyz.npy")
+    xyz[:, 0] = np.arange(len(xyz)) * 1000.0
+    np.save(query_extract / "xyz.npy", xyz)
+    mixed = evaluate_place_score_dirs(
+        gallery, gallery, query_extract_dir=query_extract, query_kind="reencoded-overlap",
+        chips_dir=chips, gsd_m=0.5, fsq_ckpt=checkpoint, backbone_mode="stub", weights_path=weights)
+    same = evaluate_place_score_dirs(
+        query_extract, query_extract, query_kind="reencoded-overlap", chips_dir=chips,
+        gsd_m=0.5, fsq_ckpt=checkpoint, backbone_mode="stub", weights_path=weights)
+    assert mixed["n_overlap_queries"] == same["n_overlap_queries"] == 0
+
+
 def test_no_rehearsal_run_numbers_are_embedded():
     paths = ["tests/test_eval_place_score.py", "docs/evaluation.md", "README.md"]
-    forbidden = ("0." + "015625", "49" + "40", "8" + "88", "0." + "997", "67" + ".2")
+    forbidden = ("0." + "015625", "49" + "40", "8" + "88", "0." + "997", "67" + ".2",
+                 "2" + "28", "3" + "02", "8" + "4.000")
     for path in paths:
         text = open(path, encoding="utf-8").read()
         assert not any(value in text for value in forbidden)

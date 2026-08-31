@@ -191,6 +191,9 @@ with genuine adjacent coverage, for example `monarc ingest-aoi --size-km 0.2
 `--query-kind reencoded-overlap --chips DIR`. It re-encodes full source PNGs and
 uses their spatially overlapping neighbor as truth while keeping the gallery
 extract unchanged.
+Pass `--query-extract DIR` to select the re-encoded overlap sources from a
+different extract while scoring against all chips in the existing gallery;
+queries with no intersecting gallery footprint remain negatives-only.
 The default `stored-grid-crop` remains a cache diagnostic. The evaluator reports
 any distinct chips that genuinely fall within the declared
 chip-size overlap radius, and uses the existing far spatial box only for
@@ -202,6 +205,7 @@ Downloads remain disabled unless explicitly enabled.
 python -m monarc.cli eval-place-score \
   --extract artifacts/extract \
   --fsq artifacts/fsq \
+  --query-extract artifacts/query_extract \
   --query-kind reencoded-overlap \
   --chips data/chips \
   --out artifacts/colorado_place_score.json
