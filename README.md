@@ -191,6 +191,10 @@ with genuine adjacent coverage, for example `monarc ingest-aoi --size-km 0.2
 `--query-kind reencoded-overlap --chips DIR`. It re-encodes full source PNGs and
 uses their spatially overlapping neighbor as truth while keeping the gallery
 extract unchanged.
+
+For a separate mixed-gallery query extract, use `ingest-aoi --align-to
+GALLERY_MANIFEST --overlap-frac 0.5`. This anchors range-read query windows to
+existing gallery footprints and preserves the gallery manifest's ENU origin.
 Pass `--query-extract DIR` to select the re-encoded overlap sources from a
 different extract while scoring against all chips in the existing gallery;
 queries with no intersecting gallery footprint remain negatives-only.

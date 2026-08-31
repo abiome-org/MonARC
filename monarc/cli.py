@@ -94,6 +94,7 @@ def _cmd_ingest_aoi(args: argparse.Namespace) -> int:
         overlap_frac=args.overlap_frac,
         gsd_m=args.gsd_m,
         materialize_only=args.materialize_only,
+        align_to=args.align_to,
     )
     sys.stdout.write(str(path) + "\n")
     return 0
@@ -308,6 +309,8 @@ def build_parser() -> argparse.ArgumentParser:
     aoi.add_argument("--max-chips", type=int, default=64)
     aoi.add_argument("--overlap-frac", type=float, default=0.0,
                      help="Fractional chip overlap; 0 keeps the legacy --chip-grid plan")
+    aoi.add_argument("--align-to", type=Path, default=None,
+                     help="Plan overlap queries against chip footprints in an existing manifest")
     aoi.add_argument("--gsd-m", type=float, default=0.3,
                      help="Ground sample distance used for overlap stride planning")
     aoi.add_argument(

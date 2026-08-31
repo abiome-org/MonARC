@@ -21,7 +21,10 @@ from monarc.data.aflora_ingest import (
     visualization_uri_from_stac_item,
 )
 from monarc.data.pc_sas import apply_sas_token, unsigned_href
-from monarc.map.cog_chips import materialize_chip_windows, materialize_chips_from_manifest, plan_chip_windows
+from monarc.map.cog_chips import (
+    materialize_chip_windows, materialize_chips_from_manifest,
+    plan_aligned_overlap_windows, plan_chip_windows,
+)
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "inventory"
 
@@ -241,6 +244,45 @@ def test_overlap_windows_range_read_new_pixels_from_larger_tile(tmp_path):
     assert np.array_equal(second_png[:, -1], tile[second["row_off"]:second["row_off"] + size,
                                                    second["col_off"] + size - 1])
     assert second["col_off"] + size - 1 > first["col_off"] + size - 1
+
+
+def test_aligned_overlap_windows_anchor_to_sparse_source_grid():
+    aoi = box_from_center(39.725, -105.220, 4.0)
+    east, north, _zone, _hemi = geodetic_to_utm(aoi.center_lat, aoi.center_lon)
+    item = {
+        "id": "source-item", "bbox": list(aoi.bbox), "catalog_href": "fixture://tile",
+        "properties": {"proj:epsg": 26913, "proj:shape": [20000, 20000],
+                       "proj:transform": [0.3, 0.0, east - 3000.0, 0.0, -0.3, north + 3000.0]},
+    }
+    source = plan_chip_windows(aoi, [item], size_px=64, grid=2, max_chips=4, gsd_m=0.3)
+    windows = plan_aligned_overlap_windows(
+        source, [item], aoi, size_px=64, overlap_frac=0.5, gsd_m=0.3, max_chips=6)
+    assert 0 < len(windows) <= 6
+    assert all(w["item_id"] == "source-item" for w in windows)
+    by_source = {}
+    for window in windows:
+        by_source.setdefault(window["aligned_to"], []).append(window)
+        origin = next(s for s in source if s["id"] == window["aligned_to"])
+        delta = np.abs(np.asarray(window["xyz"][:2]) - np.asarray(origin["xyz"][:2]))
+        assert np.all(delta < window["chip_size_m"])
+        assert window["stride_m"] < window["size_px"] * 0.3
+    pair = next(group for group in by_source.values() if len(group) == 2)
+    assert np.linalg.norm(np.asarray(pair[0]["xyz"][:2]) - np.asarray(pair[1]["xyz"][:2])) <= pair[0]["chip_size_m"]
+
+
+def test_cli_offline_align_to_keeps_source_aoi(tmp_path):
+    source = tmp_path / "source.json"
+    ingest_aoi_to_path(source, offline=FIXTURE_DIR, chip_grid=2, max_chips=4)
+    out = tmp_path / "aligned.json"
+    code = main(["ingest-aoi", "--align-to", str(source), "--offline", str(FIXTURE_DIR),
+                 "--center", "0,0", "--max-chips", "4", "--out", str(out)])
+    assert code == 0
+    source_payload, aligned = json.loads(source.read_text()), json.loads(out.read_text())
+    assert aligned["aoi"] == source_payload["aoi"]
+    assert aligned["chip_extract"]["aligned_to"] == str(source)
+    assert aligned["chip_extract"]["overlap_frac"] == 0.5
+    assert aligned["chip_extract"]["n_windows"] > 0
+    assert all(w.get("aligned_to") for w in aligned["chip_extract"]["windows"])
 
 
 def test_materialize_only_from_manifest(tmp_path):

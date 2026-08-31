@@ -169,6 +169,76 @@ def plan_chip_windows(
     return windows
 
 
+def plan_aligned_overlap_windows(
+    source_windows: Sequence[JsonObj],
+    items: Sequence[JsonObj],
+    aoi: AoiBox,
+    *,
+    size_px: int = DEFAULT_CHIP_SIZE_PX,
+    overlap_frac: float = 0.5,
+    gsd_m: float = 0.3,
+    max_chips: int = DEFAULT_MAX_CHIPS,
+) -> list[JsonObj]:
+    """Plan east/south overlap queries anchored to existing source chips."""
+    if size_px <= 0 or max_chips < 2:
+        raise ChipExtractError("chip size must be positive and max_chips must be at least 2")
+    if not 0.0 < float(overlap_frac) < 1.0:
+        raise ChipExtractError("aligned overlap_frac must be in (0, 1)")
+    if not np.isfinite(gsd_m) or float(gsd_m) <= 0.0:
+        raise ChipExtractError("gsd_m must be positive")
+    chip_size_m = float(size_px) * float(gsd_m)
+    stride_m = chip_size_m * (1.0 - float(overlap_frac))
+    item_by_id = {_item_id(item): item for item in items}
+    count = min(len(source_windows), int(max_chips) // 2)
+    if count == 0:
+        return []
+    selected = np.linspace(0, len(source_windows) - 1, count, dtype=int)
+    m_lat, m_lon = meters_per_degree(aoi.center_lat)
+    windows: list[JsonObj] = []
+    for ordinal, source_index in enumerate(selected.tolist()):
+        source = source_windows[source_index]
+        source_lat, source_lon = float(source["lat"]), float(source["lon"])
+        source_id = str(source.get("id") or f"source-{source_index}")
+        source_item = item_by_id.get(str(source.get("item_id") or ""))
+        source_easting, source_northing, _zone, _hemi = geodetic_to_utm(source_lat, source_lon)
+        for suffix, east_m, south_m in (("e", stride_m, 0.0), ("s", 0.0, stride_m)):
+            lat = source_lat - south_m / m_lat
+            lon = source_lon + east_m / m_lon
+            item = source_item
+            bbox = item.get("bbox") if item else None
+            if not bbox or not (float(bbox[0]) <= lon <= float(bbox[2]) and
+                                float(bbox[1]) <= lat <= float(bbox[3])):
+                item = covering_item(items, lon, lat)
+            if item is None:
+                continue
+            pix = pixel_window_for_point(item, lat, lon, size_px)
+            if pix is None:
+                continue
+            # Test the actual raster-window centre, not merely the requested point:
+            # edge clamping can otherwise silently move a query off its source chip.
+            props = item.get("properties") or {}
+            transform = props.get("proj:transform") or item.get("proj:transform")
+            a, _b, c, _d, e, f = parse_affine(transform)
+            actual_e = c + a * (pix["col_off"] + size_px / 2.0)
+            actual_n = f + e * (pix["row_off"] + size_px / 2.0)
+            if abs(actual_e - source_easting) >= chip_size_m or abs(actual_n - source_northing) >= chip_size_m:
+                continue
+            xyz = geodetic_to_enu(lat, lon, 0.0, aoi.center_lat, aoi.center_lon)
+            rec: JsonObj = {
+                "id": f"align-{ordinal:02d}-{suffix}", "aligned_to": source_id,
+                "item_id": _item_id(item), "catalog_href": _item_href(item),
+                "signed_href": item.get("signed_href"), "sas": item.get("sas"),
+                "sas_expiry": item.get("sas_expiry"), "lat": float(lat), "lon": float(lon),
+                "xyz": [float(xyz[0]), float(xyz[1]), float("nan")],
+                "size_px": int(size_px), "range_read": True, "copy_full_geotiff": False,
+                "chip_size_m": chip_size_m, "stride_m": stride_m,
+                "overlap_frac": float(overlap_frac),
+            }
+            rec.update(pix)
+            windows.append(rec)
+    return windows[:int(max_chips)]
+
+
 def chip_plan_block(
     windows: Sequence[JsonObj],
     *,
@@ -177,9 +247,10 @@ def chip_plan_block(
     max_chips: int,
     overlap_frac: float = 0.0,
     gsd_m: float = 0.3,
+    aligned_to: str | None = None,
 ) -> JsonObj:
     chip_size_m = float(size_px) * float(gsd_m)
-    return {
+    block = {
         "size_px": int(size_px),
         "grid": int(grid),
         "max_chips": int(max_chips),
@@ -193,6 +264,9 @@ def chip_plan_block(
         "r2_rasters": False,
         "windows": list(windows),
     }
+    if aligned_to is not None:
+        block["aligned_to"] = aligned_to
+    return block
 
 
 def local_image_read_window(href: str, col: int, row: int, width: int, height: int) -> np.ndarray:
