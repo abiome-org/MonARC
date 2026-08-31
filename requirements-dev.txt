@@ -6,6 +6,9 @@
 #
 # Mapping to subsystems:
 #   numpy        - se3.py, frustum.py, posterior.py math primitives
+#   torch        - dino_backbone.py, encoders, perceiver (CPU wheel index)
+#   scipy        - se3.py Lie group ops, geometric solvers
+#   pillow       - image loading for dataset loaders and eval scripts
 #   rasterio     - aflora_ingest.py NAIP/3DEP COG reading & warping
 #   pyproj       - coordinates.py WGS84/UTM/local NED conversions
 #   shapely      - Overture/OSM vector geometry handling before rasterization
@@ -15,6 +18,8 @@
 #   pytest       - tests/
 
 numpy
+scipy
+pillow
 rasterio
 pyproj
 shapely
