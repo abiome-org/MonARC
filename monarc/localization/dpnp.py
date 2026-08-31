@@ -130,6 +130,13 @@ def ransac_pnp(
     )
     if n < 6:
         return empty
+    if not np.isfinite(corr.uv).all() or not np.isfinite(corr.xyz).all():
+        return empty
+    # DLT cannot recover a 6-DoF camera from repeated/co-linear/co-planar
+    # chip-center ties.  Real extract+FSQ caches currently provide one xyz per
+    # chip, so matcher evaluation commonly and correctly takes its xy fallback.
+    if np.linalg.matrix_rank(corr.xyz - corr.xyz.mean(axis=0, keepdims=True)) < 3:
+        return empty
     best_inliers = np.zeros((n,), dtype=bool)
     best_T = None
     sample_n = min(6, n)

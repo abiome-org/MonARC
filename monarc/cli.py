@@ -1,4 +1,4 @@
-"""Command-line entry: dry-run, extract, train-fsq, eval-retrieve, AOI ingest, UAV benches."""
+"""Command-line entry for local MonARC ingest, training, and evaluation paths."""
 
 from __future__ import annotations
 
@@ -105,6 +105,24 @@ def _cmd_eval_retrieve(args: argparse.Namespace) -> int:
         args.fsq,
         query_fraction=args.query_fraction,
         axis=args.axis,
+        out=args.out,
+    )
+    json.dump(report, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+    return 0
+
+
+def _cmd_eval_match_pnp(args: argparse.Namespace) -> int:
+    from monarc.localization.eval_match_pnp import evaluate_match_pnp_dirs
+
+    report = evaluate_match_pnp_dirs(
+        args.extract,
+        args.fsq,
+        query_fraction=args.query_fraction,
+        axis=args.axis,
+        top_k=args.top_k,
+        retrieve_mode=args.retrieve_mode,
+        min_cosine=args.min_cosine,
         out=args.out,
     )
     json.dump(report, sys.stdout, indent=2, sort_keys=True)
@@ -287,6 +305,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Spatial box axis. auto: longer east/north span. High side is queries.",
     )
     ev.set_defaults(func=_cmd_eval_retrieve)
+
+    match_ev = sub.add_parser(
+        "eval-match-pnp",
+        help=(
+            "Retrieve top-K Colorado chips, match frozen DINO patch grids, and "
+            "run PnP/LM with a chip-center xy fallback. CPU, no network."
+        ),
+    )
+    match_ev.add_argument("--extract", type=Path, required=True)
+    match_ev.add_argument("--fsq", type=Path, required=True)
+    match_ev.add_argument("--out", type=Path, default=None)
+    match_ev.add_argument("--query-fraction", type=float, default=0.25)
+    match_ev.add_argument("--axis", default="auto", choices=["auto", "east", "north"])
+    match_ev.add_argument("--top-k", type=int, default=5)
+    match_ev.add_argument(
+        "--retrieve-mode",
+        default="bag-of-codes",
+        choices=["bag-of-codes", "dino-pooled-cosine", "dino-grid-cosine"],
+    )
+    match_ev.add_argument("--min-cosine", type=float, default=0.8)
+    match_ev.set_defaults(func=_cmd_eval_match_pnp)
 
     bench = sub.add_parser("bench-uav", help="List or parse a public UAV bench (University-1652)")
     bench.add_argument("--dataset", default="university1652")
