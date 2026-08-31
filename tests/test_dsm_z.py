@@ -36,6 +36,20 @@ def _write_dem(path):
     return path
 
 
+def _write_sloped_dem(path):
+    height = width = 120
+    rows, cols = np.indices((height, width), dtype=np.float32)
+    values = 200.0 + rows + 2.0 * cols
+    with rasterio.open(
+        path, "w", driver="GTiff", width=width, height=height, count=1,
+        dtype="float32", crs="EPSG:4326",
+        transform=from_origin(-105.011, 40.011, 0.00002, 0.00002),
+        nodata=-9999.0,
+    ) as dataset:
+        dataset.write(values, 1)
+    return path
+
+
 def _manifest(path, dem):
     payload = {
         "aoi": {"center_lat": 40.01, "center_lon": -105.01},
@@ -172,3 +186,39 @@ def test_cli_fill_dsm_z_writes_updated_xyz(tmp_path, capsys):
     report = json.loads(capsys.readouterr().out)
     assert report["n_z_filled"] == 1
     assert np.isfinite(np.load(extract / "xyz.npy")[0, 2])
+
+
+def test_cli_fill_dsm_z_writes_varying_per_patch_xyz(tmp_path, capsys):
+    dem = _write_sloped_dem(tmp_path / "slope.tif")
+    extract, fsq, chips, manifest = _cache_dirs(tmp_path, dem)
+    # Keep this fixture inside the sloped DEM and provide the DINO grid contract.
+    payload = json.loads(manifest.read_text())
+    for window in payload["chip_extract"]["windows"]:
+        window.update(lat=40.01, lon=-105.01, gsd_m=0.6)
+    manifest.write_text(json.dumps(payload) + "\n")
+    for sidecar in chips.glob("*.xyz.json"):
+        row = json.loads(sidecar.read_text())
+        row.update(lat=40.01, lon=-105.01)
+        sidecar.write_text(json.dumps(row) + "\n")
+    np.save(extract / "features.npy", np.zeros((3, 2, 4, 4), dtype=np.float32))
+    meta = json.loads((extract / "meta.json").read_text())
+    meta["patch_size"] = 14
+    (extract / "meta.json").write_text(json.dumps(meta) + "\n")
+
+    assert main([
+        "fill-dsm-z", "--extract", str(extract), "--fsq", str(fsq),
+        "--chips", str(chips), "--manifest", str(manifest), "--href", str(dem),
+        "--offline", "--patches",
+    ]) == 0
+    report = json.loads(capsys.readouterr().out)
+    patch_xyz = np.load(extract / "patch_xyz.npy")
+    assert patch_xyz.shape == (3, 4, 4, 3)
+    assert np.isfinite(patch_xyz).all()
+    assert np.unique(patch_xyz[0, ..., 0]).size > 1
+    assert np.unique(patch_xyz[0, ..., 1]).size > 1
+    assert np.unique(patch_xyz[0, ..., 2]).size > 1
+    assert np.allclose(np.load(fsq / "patch_xyz.npy"), patch_xyz)
+    assert report["xyz_kind"] == "per-patch-3dep"
+    assert report["xyz_is_chip_center"] is False
+    assert report["rasters_copied"] is False
+    assert json.loads((extract / "meta.json").read_text())["has_dsm"] is False

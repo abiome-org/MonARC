@@ -200,17 +200,18 @@ python -m monarc.cli eval-retrieve \
 
 The separate matcher path retrieves a small candidate set, matches DINO patch grids only inside those candidates, and attempts the existing PnP/LM solver. When the solver succeeds, reported xy is the camera-in-world horizontal ENU translation obtained by inverting its world-to-camera pose; `xy_estimate_kind="pnp-horizontal"` identifies it. The matched candidate chip center is used only when PnP fails, with kind `matched-chip-center-horizontal-fallback`. Current extract+FSQ xyz is one coarse coordinate per chip, including possibly sampled 3DEP Z, not per-patch DSM, and DSM z may be NaN. Separate matcher, PnP, and rank-1 errors preserve that limitation and make the estimates comparable.
 
-Fill chip-center Z on an existing cache before evaluation with public 3DEP point samples:
+Fill chip-center Z and per-DINO-cell XYZ on an existing cache with public 3DEP point samples:
 
 ```
 python -m monarc.cli fill-dsm-z \
   --extract artifacts/extract \
   --fsq artifacts/fsq \
   --chips artifacts/chips \
-  --manifest artifacts/aoi_manifest.json
+  --manifest artifacts/aoi_manifest.json \
+  --patches
 ```
 
-The command selects covering USGS TNM public-HTTPS 1 m records first and uses anonymous-SAS Planetary Computer `3dep-seamless` records as fallback. It samples each chip center by COG range read, converts the geodetic height to local ENU up, and preserves existing XY. This remains `xyz_kind="coarse-chip-center"`, not per-patch terrain. Nodata and failed samples remain NaN; no GeoTIFF is copied into extract, FSQ, or R2 output, and no requester-pays access is used. Add `--offline --href <local.tif>` for a local raster-only run.
+The command selects covering USGS TNM public-HTTPS 1 m records first and uses anonymous-SAS Planetary Computer `3dep-seamless` records as fallback. It samples each chip center and, with `--patches`, each DINO cell center by batched COG range reads. Patch longitude/latitude comes from the chip center, DINO patch geometry, and the window `gsd_m`/`gsd`; `--gsd-m 0.3` is the fallback for the NAIP 30 cm rehearsal, not a product-wide resolution law. Samples are converted to local ENU and saved as `patch_xyz.npy` beside the extract and optional FSQ cache. Chip-center `xyz.npy` remains the retrieval and spatial-split coordinate. Nodata and failed patch samples remain NaN; no DSM grid or source GeoTIFF is copied into extract, FSQ, or R2 output, and no requester-pays access is used. Add `--offline --href <local.tif>` for a local raster-only run.
 
 ```
 python -m monarc.cli eval-match-pnp \
@@ -220,7 +221,7 @@ python -m monarc.cli eval-match-pnp \
   --out artifacts/colorado_match_pnp.json
 ```
 
-Its retrieve Recall@1/5 describes only the candidate-retrieval stage on that run's spatial split. Matcher median/P90 xy error is reported beside rank-1 chip-center xy error; neither is a GPS-denied flight ATE.
+When `patch_xyz.npy` is present, PnP uses finite per-cell ENU ties from the candidate with the most mutual-nearest local matches; top-K match counts are still reported. Without it, the prior coarse chip-center fallback remains. Its retrieve Recall@1/5 describes only the candidate-retrieval stage on that run's spatial split. Matcher median/P90 xy error is reported beside rank-1 chip-center xy error; neither is a GPS-denied flight ATE.
 
 ---
 

@@ -153,3 +153,32 @@ def test_successful_pnp_reports_camera_in_world_xy(tmp_path, monkeypatch):
     assert failed[0]["pnp_xy_m"] is None
     assert report["aggregate"]["n_pnp_success"] == len(successful)
     assert report["aggregate"]["pnp_median_xy_error_m"] is not None
+
+
+def test_per_patch_xyz_uses_only_best_candidate_local_ties(tmp_path, monkeypatch):
+    extract, fsq = tmp_path / "extract", tmp_path / "fsq"
+    write_match_fixture(extract, fsq)
+    features = np.load(extract / "features.npy")
+    n, _channels, height, width = features.shape
+    rows, cols = np.indices((height, width), dtype=np.float64)
+    patch_xyz = np.empty((n, height, width, 3), dtype=np.float64)
+    for chip in range(n):
+        patch_xyz[chip, ..., 0] = chip * 100.0 + cols
+        patch_xyz[chip, ..., 1] = rows
+        patch_xyz[chip, ..., 2] = rows * cols + cols
+    np.save(extract / "patch_xyz.npy", patch_xyz)
+    seen = []
+
+    def inspect_pnp(corr, _K):
+        seen.append(corr.xyz.copy())
+        # A query's PnP set must come from one candidate, not top-K chips.
+        assert np.ptp(corr.xyz[:, 0]) < 10.0
+        assert np.unique(corr.xyz, axis=0).shape[0] > 1
+        return PnPResult(np.eye(4), np.arange(len(corr)), 0.0, True, len(corr))
+
+    monkeypatch.setattr("monarc.localization.eval_match_pnp.solve_pnp_lm", inspect_pnp)
+    report = evaluate_match_pnp_dirs(extract, fsq, axis="east", top_k=5)
+    assert seen
+    assert report["xyz_kind"] == "per-patch-3dep"
+    assert report["xyz_is_chip_center"] is False
+    assert "per-patch-metric-xyz" not in report["not"]
