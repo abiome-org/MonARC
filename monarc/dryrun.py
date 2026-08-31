@@ -100,7 +100,11 @@ def run_dry_run(
     steps: int = 8,
     device: str = "cpu",
 ) -> dict:
-    """Execute the first working-model path on synthetic chips. CPU-only default."""
+    """Execute the first working-model path on synthetic chips. CPU-only default.
+
+    Uses the tiny ``(5,5,5)`` codebook without the Stage-1 usage term so
+    unique-only 2D-3D ties remain available on the 8x8 synthetic grid.
+    """
     if device != "cpu":
         raise ValueError("dry-run is locked to CPU for this increment")
     torch.manual_seed(int(seed))
@@ -119,6 +123,7 @@ def run_dry_run(
         _as_tensor(scene["vectors"]),
         steps=steps,
         device=device,
+        usage_weight=0.0,
     )
     _f_rgb, fused, codes = encode_fused(
         backbone,
