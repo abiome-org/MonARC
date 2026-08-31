@@ -1,0 +1,52 @@
+{
+  "total": 3,
+  "items": [
+    {
+      "title": "USGS 1 Meter fixture tile A",
+      "sourceId": "fixture-3dep-a",
+      "publicationDate": "2022-02-10",
+      "format": "GeoTIFF",
+      "extent": "10000 x 10000 meter",
+      "downloadURL": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/FIXTURE/TIFF/USGS_1M_fixture_a.tif",
+      "urls": {
+        "TIFF": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/FIXTURE/TIFF/USGS_1M_fixture_a.tif"
+      },
+      "boundingBox": {
+        "minX": -105.30,
+        "maxX": -105.20,
+        "minY": 39.68,
+        "maxY": 39.75
+      }
+    },
+    {
+      "title": "USGS 1 Meter fixture tile B",
+      "sourceId": "fixture-3dep-b",
+      "publicationDate": "2022-02-10",
+      "format": "GeoTIFF",
+      "extent": "10000 x 10000 meter",
+      "downloadURL": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/FIXTURE/TIFF/USGS_1M_fixture_b.tif",
+      "urls": {
+        "TIFF": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/FIXTURE/TIFF/USGS_1M_fixture_b.tif"
+      },
+      "boundingBox": {
+        "minX": -105.22,
+        "maxX": -105.12,
+        "minY": 39.70,
+        "maxY": 39.78
+      }
+    },
+    {
+      "title": "USGS 1 Meter fixture far away",
+      "sourceId": "fixture-3dep-far",
+      "publicationDate": "2022-02-10",
+      "format": "GeoTIFF",
+      "downloadURL": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/FIXTURE/TIFF/USGS_1M_fixture_far.tif",
+      "boundingBox": {
+        "minX": -108.0,
+        "maxX": -107.9,
+        "minY": 37.0,
+        "maxY": 37.1
+      }
+    }
+  ]
+}

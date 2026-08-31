@@ -40,11 +40,12 @@ venv.bak/
 *.engine
 *.trt
 
-# Data, rasters, and elevation caches
-data/
-datasets/
-raw_data/
-processed_data/
+# Data, rasters, and elevation caches (workspace dumps, not the Python package)
+/data/
+/datasets/
+/raw_data/
+/processed_data/
+/artifacts/
 *.tif
 *.tiff
 *.vrt

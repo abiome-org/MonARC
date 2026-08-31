@@ -117,6 +117,10 @@ Perspective pairs are used exclusively for cross-view alignment of the perspecti
 | **OrthoLoC** | UAV 6-DoF localization vs. DOP & DSM geodata | Calibrated multi-rotor UAV (50–120m AGL) | 16,425 images across 47 regions in Germany & USA | [OrthoLoC Project](https://deepscenario.github.io/OrthoLoC/) | Required |
 | **Calibrated Flight Logs** | Operational flight validation | Fixed-wing / VTOL with RTK-GPS | Proprietary test corridors | Internal flight logs | Expansion / validation; not a v1 training requirement |
 
+University-1652 is the first implemented public-UAV loader (`monarc.data.uav_benchmarks.University1652`). The layout is a documented ImageFolder of building IDs (`train/drone/<id>`, `train/satellite/<id>`, `test/query_drone/<id>`, …). Download is optional; unit tests use a synthetic JPEG fixture. Street-view folders exist on the full dataset and are not ingested into the aerial codebook (see [`non-goals.md`](./non-goals.md) §2.5).
+
+DenseUAV, SUES-200, and OrthoLoC remain **v1 Stage 2 required datasets**. This increment registers them and implements University-1652 first (least-friction ImageFolder). OrthoLoC (~287 GB TUM dump, npz + DOP/DSM, CC BY-NC-SA 4.0) is the later 6-DoF adapter, not the first parsed bench.
+
 ---
 
 ## 4. Tier C: The Frustum Gym Environment
@@ -183,3 +187,14 @@ Aflora **does not copy** NAIP/3DEP rasters into a second object store. It may wa
 Stage 1 **training** of the fusion stem and FSQ uses a **sampled** diverse tile set (multiple biomes, tiny versus CONUS). Stage 1 **inference** that writes the index runs on **Colorado**. See [`docs/training.md`](./training.md).
 
 v2 adds further states with the same pipeline **after Colorado works**. It does not require a CONUS raster factory as a v1 prerequisite.
+
+---
+
+## 7. Golden–Morrison rehearsal ingest (this increment)
+
+`monarc ingest-aoi` intersects the 10×10 km Golden–Morrison box (center 39.725°N, 105.220°W) with:
+
+- NAIP **visualization** via STAC search (`https://planetarycomputer.microsoft.com/api/stac/v1/search`, collection `naip`), rewriting item hrefs to `s3://naip-visualization/{state}/{year}/{gsd}cm/rgb/{quad}/{file}`. Tile IDs come from the catalog, not from a hardcoded list.
+- USGS 3DEP inventory via TNMAccess (`https://tnmaccess.nationalmap.gov/api/v1/products`, dataset `Digital Elevation Model (DEM) 1 meter`).
+
+The helper writes a JSON manifest. It does not download rasters, does not walk the full state, and does not persist `naip-source` objects. CPU tests use `tests/fixtures/inventory/` (`--offline`). v1 product coverage remains Colorado-the-state; CONUS is v2 ([`cost.md`](./cost.md)). The Golden–Morrison box is a $150 rehearsal slice, not a rewrite of coverage.

@@ -224,3 +224,19 @@ When expanding:
 2. Keep FSQ codes + inverted index as the exported object (R2 is for that product, not rasters).
 3. Keep Stage 1 as sampled training + per-region inference (Colorado, then additional states).
 4. Keep existing bans (50 ft sweeps, YouTube, VLA, street VPR, H3-as-identity, Unreal/MSFS Hunter gyms, hardcoded geology/landcover classes).
+
+---
+
+## 12. Golden–Morrison rehearsal (this executable increment)
+
+The 10×10 km Golden–Morrison box (center approximately 39.725°N, 105.220°W; 100 km²) is a **rehearsal / first slice** for CPU dry-run ingest: STAC ∩ TNMAccess manifest, tiny FSQ, code→xyz index. It sits inside Colorado (Front Range). It does **not** rewrite v1 coverage. Jefferson County remains a slice, not the product. CONUS remains v2.
+
+This increment:
+
+- Writes an AOI **manifest** of intersecting NAIP visualization COGs and 3DEP inventory records. Tile IDs come from catalogs at launch time, not a hardcoded list.
+- Persists FSQ codes, metric xyz, and compact metadata. Does not download or store rasters. Does not persist `naip-source`. Does not walk the full state.
+- Adds no Terraform. NAT Gateway, SageMaker, and EKS remain forbidden (§6.5). The cheap 2026 vendor lock in §6 is unchanged.
+
+The $150 figure attached to this box is the **slice rehearsal envelope**, inside the v1 first-pass planning band in §2. It is not an invoice and not a performance claim.
+
+Colorado retrieval reports and public-UAV adapter reports stay on separate tracks ([`evaluation.md`](./evaluation.md)). This file does not record Recall@1, median translation, or other numeric gates.
