@@ -130,6 +130,22 @@ def _cmd_eval_match_pnp(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_fill_dsm_z(args: argparse.Namespace) -> int:
+    from monarc.map.dsm_z import fill_xyz_dirs
+
+    report = fill_xyz_dirs(
+        args.extract,
+        manifest_path=args.manifest,
+        fsq_dir=args.fsq,
+        chips_dir=args.chips,
+        href=args.href,
+        offline=args.offline,
+    )
+    json.dump(report, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+    return 0
+
+
 def _cmd_bench_uav(args: argparse.Namespace) -> int:
     from monarc.data.uav_benchmarks import University1652, list_public_uav_benches
 
@@ -326,6 +342,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     match_ev.add_argument("--min-cosine", type=float, default=0.8)
     match_ev.set_defaults(func=_cmd_eval_match_pnp)
+
+    fill_z = sub.add_parser(
+        "fill-dsm-z",
+        help="Fill coarse chip-center ENU Z from public 3DEP range-read samples",
+    )
+    fill_z.add_argument("--extract", type=Path, required=True)
+    fill_z.add_argument("--fsq", type=Path, default=None)
+    fill_z.add_argument("--chips", type=Path, default=None)
+    fill_z.add_argument("--manifest", type=Path, required=True)
+    fill_z.add_argument(
+        "--href", default=None, help="Override records with one local or public GeoTIFF"
+    )
+    fill_z.add_argument(
+        "--offline", action="store_true", help="Reject HTTP sources (use with local --href)"
+    )
+    fill_z.set_defaults(func=_cmd_fill_dsm_z)
 
     bench = sub.add_parser("bench-uav", help="List or parse a public UAV bench (University-1652)")
     bench.add_argument("--dataset", default="university1652")
