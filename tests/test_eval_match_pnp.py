@@ -86,3 +86,16 @@ def test_cli_eval_match_pnp_writes_json(tmp_path, capsys):
     saved = json.loads(out.read_text())
     assert printed["track"] == saved["track"] == "colorado-match-pnp"
     assert printed["retrieve_recall_at_1"] == saved["retrieve_recall_at_1"]
+
+
+def test_matcher_reports_when_all_chip_center_z_is_finite(tmp_path):
+    extract, fsq = tmp_path / "extract", tmp_path / "fsq"
+    write_match_fixture(extract, fsq)
+    for directory in (extract, fsq):
+        xyz = np.load(directory / "xyz.npy")
+        xyz[:, 2] = 80.0
+        np.save(directory / "xyz.npy", xyz)
+    report = evaluate_match_pnp_dirs(extract, fsq, axis="east", top_k=5)
+    assert report["xyz_kind"] == "coarse-chip-center"
+    assert report["xyz_is_chip_center"] is True
+    assert report["dsm_z_may_be_nan"] is False

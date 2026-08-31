@@ -200,6 +200,18 @@ python -m monarc.cli eval-retrieve \
 
 The separate matcher path retrieves a small candidate set, matches DINO patch grids only inside those candidates, and attempts the existing PnP/LM solver. Current extract+FSQ xyz is one coarse coordinate per chip, not per patch, and DSM z may be NaN. The report flags that limitation and always provides a horizontal matched-chip-center fallback when PnP is underconstrained.
 
+Fill chip-center Z on an existing cache before evaluation with public 3DEP point samples:
+
+```
+python -m monarc.cli fill-dsm-z \
+  --extract artifacts/extract \
+  --fsq artifacts/fsq \
+  --chips artifacts/chips \
+  --manifest artifacts/aoi_manifest.json
+```
+
+The command selects covering USGS TNM public-HTTPS 1 m records first and uses anonymous-SAS Planetary Computer `3dep-seamless` records as fallback. It samples each chip center by COG range read, converts the geodetic height to local ENU up, and preserves existing XY. This remains `xyz_kind="coarse-chip-center"`, not per-patch terrain. Nodata and failed samples remain NaN; no GeoTIFF is copied into extract, FSQ, or R2 output, and no requester-pays access is used. Add `--offline --href <local.tif>` for a local raster-only run.
+
 ```
 python -m monarc.cli eval-match-pnp \
   --extract artifacts/extract \

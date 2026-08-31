@@ -81,6 +81,7 @@ MonARC/
 |   |   +-- fusion_stem.py      # Trainable raster fusion stem for DSM + vector masks
 |   |   +-- quantizer.py        # Finite Scalar Quantization (FSQ) and residual VQ
 |   |   +-- continuous_field.py # On-demand / working-set interpolated field (not CONUS store)
+|   |   +-- dsm_z.py            # Public 3DEP chip-center elevation sampling and xyz fill
 |   |   +-- metric_index.py     # Inverted index (code -> xyz + metric constellations)
 |   |   +-- s2_shard.py         # S2-based spatial sharding for tracking-mode acceleration
 |   +-- perspective/            # Subsystem 2: Perspective encoder & cross-view alignment

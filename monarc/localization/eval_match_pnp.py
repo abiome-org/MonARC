@@ -270,7 +270,7 @@ def evaluate_match_pnp(
         },
         "xyz_kind": "coarse-chip-center",
         "xyz_is_chip_center": True,
-        "dsm_z_may_be_nan": True,
+        "dsm_z_may_be_nan": bool(np.isnan(xyz[:, 2]).any()),
         "network": False,
         "is_university1652": False,
         "is_gps_denied_flight_ate": False,
