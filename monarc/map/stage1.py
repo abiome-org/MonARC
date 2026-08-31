@@ -10,7 +10,7 @@ import torch.nn.functional as F
 
 from monarc.map.dino_backbone import FrozenDinoBackbone
 from monarc.map.fusion_stem import ChannelFusion, FusionStem
-from monarc.map.quantizer import FSQHead
+from monarc.map.quantizer import DEFAULT_FSQ_LEVELS, FSQHead
 
 
 class RgbReconHead(nn.Module):
@@ -30,6 +30,24 @@ def spatial_smoothness(z_hat: torch.Tensor) -> torch.Tensor:
     return dh.pow(2).mean() + dw.pow(2).mean()
 
 
+def stage1_loss(
+    z: torch.Tensor,
+    z_hat_nchw: torch.Tensor,
+    target: torch.Tensor,
+    recon: RgbReconHead,
+    fsq_head: FSQHead,
+    *,
+    smooth_weight: float,
+    usage_weight: float,
+) -> torch.Tensor:
+    loss = F.mse_loss(recon(z_hat_nchw), target)
+    if smooth_weight:
+        loss = loss + float(smooth_weight) * spatial_smoothness(z_hat_nchw)
+    if usage_weight:
+        loss = loss + float(usage_weight) * fsq_head.fsq.usage_loss(z)
+    return loss
+
+
 def train_tiny_codebook(
     backbone: FrozenDinoBackbone,
     fusion_stem: FusionStem,
@@ -41,7 +59,8 @@ def train_tiny_codebook(
     *,
     steps: int = 8,
     lr: float = 1e-3,
-    smooth_weight: float = 0.1,
+    smooth_weight: float = 0.05,
+    usage_weight: float = 1.0,
     device: torch.device | str = "cpu",
 ) -> dict:
     """Few-step Stage-1 update: fusion + FSQ projection, frozen RGB encoder."""
@@ -56,17 +75,12 @@ def train_tiny_codebook(
     vectors = vectors.to(device)
     for parameter in backbone.parameters():
         parameter.requires_grad = False
-    fsq_params = list(fsq_head.parameters())
-    other = (
+    opt = torch.optim.Adam(
         list(fusion_stem.parameters())
         + list(channel_fusion.parameters())
-        + list(recon.parameters())
-    )
-    opt = torch.optim.Adam(
-        [
-            {"params": other, "lr": lr},
-            {"params": fsq_params, "lr": lr * 0.1},
-        ]
+        + list(fsq_head.parameters())
+        + list(recon.parameters()),
+        lr=lr,
     )
     losses: list[float] = []
     backbone.eval()
@@ -80,11 +94,18 @@ def train_tiny_codebook(
         opt.zero_grad(set_to_none=True)
         f_geo = fusion_stem(dsm, vectors)
         fused = channel_fusion(f_rgb, f_geo)
-        z_hat, codes = fsq_head(fused)
-        recon_rgb = recon(z_hat)
-        loss_recon = F.mse_loss(recon_rgb, f_rgb)
-        loss_smooth = spatial_smoothness(z_hat)
-        loss = loss_recon + smooth_weight * loss_smooth
+        z = fsq_head.project(fused)
+        z_hat_hw, codes = fsq_head.fsq(z)
+        z_hat = z_hat_hw.permute(0, 3, 1, 2).contiguous()
+        loss = stage1_loss(
+            z,
+            z_hat,
+            f_rgb,
+            recon,
+            fsq_head,
+            smooth_weight=smooth_weight,
+            usage_weight=usage_weight,
+        )
         loss.backward()
         opt.step()
         losses.append(float(loss.detach().cpu()))
@@ -193,7 +214,8 @@ def train_from_features(
     *,
     steps: int = 8,
     lr: float = 1e-3,
-    smooth_weight: float = 0.1,
+    smooth_weight: float = 0.05,
+    usage_weight: float = 1.0,
     batch_size: int = 4,
     device: torch.device | str = "cpu",
     recon: RgbReconHead | None = None,
@@ -213,18 +235,13 @@ def train_from_features(
     if n < 1:
         raise ValueError("feature cache is empty")
     batch_size = max(1, min(int(batch_size), n))
-    fsq_params = list(fsq_head.parameters())
-    other = (
-        list(fusion_stem.parameters())
-        + list(channel_fusion.parameters())
-        + list(recon.parameters())
-    )
     if optimizer is None:
         optimizer = torch.optim.Adam(
-            [
-                {"params": other, "lr": lr},
-                {"params": fsq_params, "lr": lr * 0.1},
-            ]
+            list(fusion_stem.parameters())
+            + list(channel_fusion.parameters())
+            + list(fsq_head.parameters())
+            + list(recon.parameters()),
+            lr=lr,
         )
     losses: list[float] = []
     last_codes: torch.Tensor | None = None
@@ -245,8 +262,18 @@ def train_from_features(
         optimizer.zero_grad(set_to_none=True)
         f_geo = _geo_from_optional(fusion_stem, rgb_b, dsm_b, vec_b)
         fused = channel_fusion(rgb_b, f_geo)
-        z_hat, codes = fsq_head(fused)
-        loss = F.mse_loss(recon(z_hat), rgb_b) + smooth_weight * spatial_smoothness(z_hat)
+        z = fsq_head.project(fused)
+        z_hat_hw, codes = fsq_head.fsq(z)
+        z_hat = z_hat_hw.permute(0, 3, 1, 2).contiguous()
+        loss = stage1_loss(
+            z,
+            z_hat,
+            rgb_b,
+            recon,
+            fsq_head,
+            smooth_weight=smooth_weight,
+            usage_weight=usage_weight,
+        )
         loss.backward()
         optimizer.step()
         loss_v = float(loss.detach().cpu())
@@ -279,12 +306,15 @@ def train_from_features(
     last_codes = codes
     last_fused = fused
     used = int(torch.unique(codes).numel())
+    n_tokens = int(codes.numel())
     return {
         "losses": losses,
         "codes": last_codes.detach().cpu() if last_codes is not None else codes.detach().cpu(),
         "fused": last_fused.detach().cpu() if last_fused is not None else fused.detach().cpu(),
         "codebook_size": int(fsq_head.fsq.codebook_size),
         "unique_codes": used,
+        "n_tokens": n_tokens,
+        "n_chips": n,
         "levels": list(fsq_head.fsq.levels),
         "step": step,
         "recon": recon,
@@ -341,7 +371,7 @@ def load_stage1_checkpoint(
 
 def default_stage1_modules(
     vector_channels: int = 4,
-    levels: Sequence[int] = (5, 5, 5),
+    levels: Sequence[int] = DEFAULT_FSQ_LEVELS,
     backbone: FrozenDinoBackbone | None = None,
 ) -> tuple[FrozenDinoBackbone, FusionStem, ChannelFusion, FSQHead]:
     if backbone is None:
