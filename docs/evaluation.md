@@ -56,13 +56,23 @@ This protocol is a map-cache diagnostic, not University-1652 and not GPS-denied 
 ### 1.4 Colorado place verification (`monarc eval-place-score`)
 
 `monarc eval-place-score --extract <dir> --fsq <dir> --out <json>` measures the
-same-place decision grain using only cached `features.npy`, `codes.npy`, and
-`xyz.npy`. It is CPU-only and performs no image loading, feature extraction,
-network access, or raster access.
+same-place decision grain. Its default `stored-grid-crop` query kind slices
+cached `features.npy` and `codes.npy`; this is a cache-alignment diagnostic, not
+an independently encoded view.
+
+The product-grain `reencoded-crop` query kind loads each gallery chip PNG,
+applies the configured patch-margin crop and one-patch ordinal jitter, resizes
+the pixel crop to the extract size with bilinear interpolation, and sends it
+through frozen DINOv2-B/14 and the existing frozen Stage-1 FSQ checkpoint. For
+a 224-pixel chip with patch size 14 and margin 2, the nominal 168-pixel crop is
+resized to 224 pixels and produces a new 16-by-16 DINO grid. The gallery remains
+the unchanged extract; it is never re-encoded by this evaluation. Downloads are
+disabled by default, and the command records the query kind and local model
+inputs in JSON.
 
 The gallery is the complement of the existing high-side spatial-box holdout.
-Each gallery feature/code grid supplies one aligned crop-jitter query whose true
-identity is that gallery chip. Distinct gallery chips also supply spatial-overlap
+Each selected gallery chip supplies one crop-jitter query whose true identity is
+that gallery chip. Distinct gallery chips also supply spatial-overlap
 queries when their horizontal center distance is no greater than
 `chip_size_m = extract_size_px * gsd_m`; the JSON reports the observed count,
 including zero. Self is excluded from this distinct-overlap count. The held-out
