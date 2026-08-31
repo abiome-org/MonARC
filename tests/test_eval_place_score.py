@@ -312,9 +312,15 @@ def test_nonoverlapping_query_extract_is_honest_zero_in_both_modes(tmp_path):
 
 
 def test_no_rehearsal_run_numbers_are_embedded():
-    paths = ["tests/test_eval_place_score.py", "docs/evaluation.md", "README.md"]
-    forbidden = ("0." + "015625", "49" + "40", "8" + "88", "0." + "997", "67" + ".2",
-                 "2" + "28", "3" + "02", "8" + "4.000")
+    paths = [
+        "docs/evaluation.md", "README.md", "monarc/map/cog_chips.py",
+        "monarc/data/aflora_ingest.py", "monarc/localization/eval_place_score.py",
+    ]
+    forbidden = (
+        "0." + "0148", "0." + "014765625", "2" + "28", "67" + ".2",
+        "2" + "56", "9" + "380", "4" + "019", "0." + "015625",
+        "49" + "40", "8" + "88", "0." + "997",
+    )
     for path in paths:
         text = open(path, encoding="utf-8").read()
         assert not any(value in text for value in forbidden)

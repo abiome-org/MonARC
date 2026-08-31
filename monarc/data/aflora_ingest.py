@@ -45,6 +45,7 @@ from monarc.map.cog_chips import (
     WindowReader,
     chip_plan_block,
     materialize_chip_windows,
+    plan_aligned_overlap_windows,
     plan_chip_windows,
 )
 
@@ -897,6 +898,7 @@ def ingest_aoi_to_path(
     gsd_m: float = 0.3,
     window_reader: WindowReader | None = None,
     materialize_only: bool = False,
+    align_to: str | Path | None = None,
     http_get: HttpGet | None = None,
     http_post: HttpPost | None = None,
     http_get_text: HttpGetText | None = None,
@@ -912,6 +914,51 @@ def ingest_aoi_to_path(
             manifest["chip_extract"]["windows"] = windows
             write_manifest(manifest, out_path)
         materialize_chip_windows(windows, chips_dir, reader=window_reader)
+        return out_path
+
+    if align_to is not None:
+        source_path = Path(align_to)
+        source_manifest = json.loads(source_path.read_text())
+        source_aoi = source_manifest.get("aoi") or {}
+        try:
+            west, south, east, north = source_aoi["bbox_wgs84"]
+            size_east, size_north = source_aoi.get("size_km", [0.0, 0.0])
+            aoi = AoiBox(
+                west=float(west), south=float(south), east=float(east), north=float(north),
+                center_lat=float(source_aoi["center_lat"]),
+                center_lon=float(source_aoi["center_lon"]),
+                size_km_north=float(size_north), size_km_east=float(size_east),
+                name=str(source_aoi.get("name", "")), role=str(source_aoi.get("role", "")),
+                product_boundary=str(source_aoi.get("product_boundary", "colorado-state")),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("--align-to manifest has no valid source AOI") from exc
+        source_windows = (source_manifest.get("chip_extract") or {}).get("windows") or []
+        item_records = (source_manifest.get("naip") or {}).get("items") or []
+        if not source_windows or not item_records:
+            raise ValueError("--align-to manifest requires chip_extract.windows and naip.items")
+        if offline is None and source_manifest.get("source") == SOURCE_PLANETARY_COMPUTER:
+            item_records = refresh_naip_signatures(
+                list(item_records), http_get=http_get or default_http_get)
+            source_manifest["naip"]["items"] = item_records
+        effective_overlap = 0.5 if float(overlap_frac) == 0.0 else float(overlap_frac)
+        effective_size = int(chip_size)
+        if chip_size == DEFAULT_CHIP_SIZE_PX:
+            effective_size = int((source_manifest.get("chip_extract") or {}).get("size_px", chip_size))
+        windows = plan_aligned_overlap_windows(
+            source_windows, item_records, aoi, size_px=effective_size,
+            overlap_frac=effective_overlap, gsd_m=gsd_m, max_chips=max_chips,
+        )
+        manifest = dict(source_manifest)
+        manifest["aoi"] = source_manifest["aoi"]
+        manifest["queried_at"] = _utcnow()
+        manifest["chip_extract"] = chip_plan_block(
+            windows, size_px=effective_size, grid=chip_grid, max_chips=max_chips,
+            overlap_frac=effective_overlap, gsd_m=gsd_m, aligned_to=str(source_path),
+        )
+        write_manifest(manifest, out_path)
+        if chips_dir is not None:
+            materialize_chip_windows(windows, chips_dir, reader=window_reader)
         return out_path
 
     aoi = aoi_from_args(center, size_km)

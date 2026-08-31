@@ -90,6 +90,12 @@ positive intersection area. If the query lies in a gallery-grid hole or
 outside the gallery AOI and no footprint intersects, it has no positive:
 `n_overlap_queries=0` is reported rather than assigning the nearest chip.
 
+Cut mixed-gallery overlap queries from existing gallery chip footprints with
+`ingest-aoi --align-to <gallery-manifest>`. Do not plan a new small AOI
+independently: a regular coarse gallery can contain grid holes even when the
+new AOI lies inside its bounding box. A result with `n_overlap_queries=0`
+remains honest when query and gallery footprints do not intersect.
+
 The gallery is the complement of the existing high-side spatial-box holdout.
 For the crop query kinds, each selected gallery chip supplies one crop-jitter query whose true identity is
 that gallery chip. Distinct gallery chips also supply spatial-overlap
