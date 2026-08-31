@@ -5,6 +5,8 @@ import json
 import numpy as np
 
 from monarc.cli import main
+from monarc.common.se3 import invert_se3
+from monarc.localization.dpnp import PnPResult
 from monarc.localization.eval_match_pnp import evaluate_match_pnp_dirs, match_dino_grids
 
 
@@ -68,8 +70,16 @@ def test_matcher_refines_wrong_rank1_and_handles_nan_z(tmp_path):
     assert all(row["rank1_id"] != row["top_k_ids"][1] for row in report["queries"])
     assert all(row["match_inlier_count"] == 16 for row in report["queries"])
     assert all(row["pnp_success"] is False for row in report["queries"])
+    assert all(
+        row["xy_estimate_kind"] == "matched-chip-center-horizontal-fallback"
+        for row in report["queries"]
+    )
+    assert all(row["refined_xy_m"] == row["matcher_xy_m"] for row in report["queries"])
+    assert all(row["pnp_xy_m"] is None for row in report["queries"])
     assert all(np.isfinite(row["xy_error_m"]) for row in report["queries"])
     assert report["aggregate"]["matcher_median_xy_error_m"] < report["aggregate"]["rank1_median_xy_error_m"]
+    assert report["aggregate"]["n_pnp_success"] == 0
+    assert report["aggregate"]["pnp_median_xy_error_m"] is None
     assert "university1652" in report["not"]
     assert "gps-denied-flight-ate" in report["not"]
 
@@ -99,3 +109,47 @@ def test_matcher_reports_when_all_chip_center_z_is_finite(tmp_path):
     assert report["xyz_kind"] == "coarse-chip-center"
     assert report["xyz_is_chip_center"] is True
     assert report["dsm_z_may_be_nan"] is False
+
+
+def test_successful_pnp_reports_camera_in_world_xy(tmp_path, monkeypatch):
+    extract, fsq = tmp_path / "extract", tmp_path / "fsq"
+    write_match_fixture(extract, fsq)
+    for directory in (extract, fsq):
+        xyz = np.load(directory / "xyz.npy")
+        xyz[:, 2] = np.array([70.0, 73.0, 79.0, 82.0, 71.0, 77.0, 80.0, 86.0])
+        np.save(directory / "xyz.npy", xyz)
+    features = np.load(extract / "features.npy")
+    features[:] = features[0]
+    np.save(extract / "features.npy", features)
+
+    T_cw = np.eye(4)
+    T_cw[:3, 3] = [-4.0, -6.0, -9.0]
+    calls = 0
+
+    def successful_pnp(corr, _K):
+        nonlocal calls
+        unique_xyz = np.unique(corr.xyz, axis=0)
+        assert unique_xyz.shape[0] > 1
+        assert np.linalg.matrix_rank(unique_xyz - unique_xyz.mean(axis=0)) == 3
+        pose = T_cw.copy()
+        if calls:
+            pose[0, 3] = np.nan
+        calls += 1
+        return PnPResult(pose, np.arange(len(corr)), 0.0, True, len(corr))
+
+    monkeypatch.setattr("monarc.localization.eval_match_pnp.solve_pnp_lm", successful_pnp)
+
+    report = evaluate_match_pnp_dirs(extract, fsq, axis="east", top_k=5)
+    successful = [row for row in report["queries"] if row["pnp_success"]]
+    assert successful
+    row = successful[0]
+    assert row["xy_estimate_kind"] == "pnp-horizontal"
+    expected_xy = invert_se3(np.asarray(row["pose_T_cw"]))[:2, 3]
+    assert np.allclose(row["refined_xy_m"], expected_xy, rtol=0.0, atol=1e-9)
+    assert np.allclose(row["pnp_xy_m"], expected_xy, rtol=0.0, atol=1e-9)
+    failed = [row for row in report["queries"] if not row["pnp_success"]]
+    assert failed[0]["xy_estimate_kind"] == "matched-chip-center-horizontal-fallback"
+    assert failed[0]["refined_xy_m"] == failed[0]["matcher_xy_m"]
+    assert failed[0]["pnp_xy_m"] is None
+    assert report["aggregate"]["n_pnp_success"] == len(successful)
+    assert report["aggregate"]["pnp_median_xy_error_m"] is not None
