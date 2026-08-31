@@ -112,6 +112,18 @@ def _cmd_eval_retrieve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_eval_place_score(args: argparse.Namespace) -> int:
+    from monarc.localization.eval_place_score import evaluate_place_score_dirs
+
+    report = evaluate_place_score_dirs(
+        args.extract, args.fsq, gsd_m=args.gsd_m, query_fraction=args.query_fraction,
+        axis=args.axis, crop_margin=args.crop_margin, top_k=args.top_k, out=args.out,
+    )
+    json.dump(report, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+    return 0
+
+
 def _cmd_eval_match_pnp(args: argparse.Namespace) -> int:
     from monarc.localization.eval_match_pnp import evaluate_match_pnp_dirs
 
@@ -323,6 +335,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Spatial box axis. auto: longer east/north span. High side is queries.",
     )
     ev.set_defaults(func=_cmd_eval_retrieve)
+
+    place_ev = sub.add_parser(
+        "eval-place-score",
+        help="Same-place crop/overlap verification from local DINO grids and FSQ codes. CPU, no network.",
+    )
+    place_ev.add_argument("--extract", type=Path, required=True)
+    place_ev.add_argument("--fsq", type=Path, required=True)
+    place_ev.add_argument("--out", type=Path, required=True)
+    place_ev.add_argument("--gsd-m", type=float, default=0.3)
+    place_ev.add_argument("--query-fraction", type=float, default=0.25,
+                          help="Far spatial-box fraction only")
+    place_ev.add_argument("--axis", default="auto", choices=["auto", "east", "north"],
+                          help="Far spatial-box axis only")
+    place_ev.add_argument("--crop-margin", type=int, default=2, help="Crop margin in DINO patches")
+    place_ev.add_argument("--top-k", type=int, default=5)
+    place_ev.set_defaults(func=_cmd_eval_place_score)
 
     match_ev = sub.add_parser(
         "eval-match-pnp",
